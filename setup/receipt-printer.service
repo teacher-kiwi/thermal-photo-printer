@@ -1,0 +1,28 @@
+# 부팅 시 영수증 프린터 서버를 자동 실행하는 systemd 유닛
+# 설치:
+#   sudo cp setup/receipt-printer.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now receipt-printer
+# 로그 확인:
+#   journalctl -u receipt-printer -f
+#
+# 주의: WorkingDirectory / User / ExecStart 경로를 실제 환경에 맞게 수정하세요.
+#       USB 장치 직접 접근을 위해 udev 규칙(아래 99-escpos-printer.rules)을 적용하면
+#       User=pi 로 동작합니다. 규칙을 적용하지 않았다면 User=root 로 바꾸세요.
+
+[Unit]
+Description=Receipt Printer Web Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/app
+# 필요 시 프린터 ID 고정:  Environment=PRINTER_VID=0x0416 PRINTER_PID=0x5011
+ExecStart=/app/venv/bin/python /app/server.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

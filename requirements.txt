@@ -1,0 +1,6 @@
+Flask
+Pillow
+numpy
+python-escpos
+pyusb
+pyserial

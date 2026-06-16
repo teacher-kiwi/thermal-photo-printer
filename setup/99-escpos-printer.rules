@@ -1,0 +1,14 @@
+# USB 영수증 프린터에 일반 사용자(pi)가 접근할 수 있도록 권한을 부여하는 udev 규칙.
+# 이게 없으면 USB 직접 접근(pyusb)에 root 권한이 필요합니다.
+#
+# 1) lsusb 로 프린터의 ID 확인:  예) Bus 001 Device 005: ID 0416:5011 ...
+# 2) 아래 idVendor/idProduct 를 그 값으로 수정
+# 3) 설치:
+#      sudo cp setup/99-escpos-printer.rules /etc/udev/rules.d/
+#      sudo udevadm control --reload-rules && sudo udevadm trigger
+# 4) 프린터 USB 를 뽑았다 다시 꽂기
+
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0416", ATTRS{idProduct}=="5011", MODE="0666", GROUP="plugdev"
+
+# 시리얼(CDC)로 잡히는 프린터라면 보통 dialout 그룹이면 충분합니다:
+#   sudo usermod -aG dialout pi

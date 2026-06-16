@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>영수증 프린터</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <h1>🧾 사진 출력</h1>
+
+  <!-- 방법 1: 사진 파일 선택 / 기본 카메라로 촬영 -->
+  <section class="card">
+    <h2>사진 선택 / 촬영</h2>
+    <label class="btn" for="file">사진 고르기</label>
+    <input id="file" type="file" accept="image/*" capture="environment" hidden>
+    <p class="hint">갤러리에서 고르거나 카메라로 바로 찍을 수 있어요.</p>
+  </section>
+
+  <!-- 방법 2: 웹페이지 내 실시간 카메라 (HTTPS 필요) -->
+  <section class="card">
+    <h2>실시간 카메라</h2>
+    <video id="video" autoplay playsinline muted></video>
+    <div class="row">
+      <button id="capture" class="btn">촬영해서 출력</button>
+      <button id="flip" class="btn ghost">카메라 전환</button>
+    </div>
+    <p id="camErr" class="hint err" hidden></p>
+  </section>
+
+  <canvas id="canvas" hidden></canvas>
+  <div id="status" class="status" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
