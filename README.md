@@ -98,6 +98,29 @@ journalctl -u receipt-printer -f      # 로그 확인
 
 ---
 
+## 개발 / 미리보기 (프린터·파이 없이)
+
+페이지 UI나 출력물(밝기·감마·디더링)을 **노트북에서 미리 보며 수정**할 수 있습니다.
+영수증에 찍히는 건 `prepare_image()`가 만드는 576px 1비트 이미지라서, 그걸 PNG로 보면 실제 출력물과 거의 동일합니다.
+
+### 1) 목(mock) 모드로 웹서버 실행
+```bash
+MOCK_PRINTER=1 ./venv/bin/python server.py
+```
+- 브라우저로 `http://localhost:3001` 접속 (목 모드는 HTTP로도 충분)
+- 사진을 고르고 "출력"을 누르면 인쇄 대신 **"출력 미리보기"** 이미지가 페이지에 표시됨
+- 결과 PNG는 `static/preview/` 에 저장 (최신본은 `static/preview/latest.png`)
+
+### 2) 명령 한 줄로 빠르게 튜닝
+```bash
+./venv/bin/python preview.py 사진.jpg                       # 사진_preview.png 생성
+./venv/bin/python preview.py 사진.jpg --brightness 1.2 --gamma 2.2
+```
+마음에 드는 `--brightness`/`--gamma` 값을 찾았으면, `server.py` 의 `prepare_image()` 기본값에 반영하세요.
+
+> 목 모드는 `python-escpos`/USB 없이도 돌아갑니다. UI·이미지 처리만 손볼 땐 이 모드로 반복하고,
+> 다 됐을 때 파이에 올려 실제 출력으로 최종 확인하면 됩니다.
+
 ## 문제 해결
 | 증상 | 확인 |
 |------|------|

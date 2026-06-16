@@ -21,7 +21,13 @@ async function sendImage(blob) {
     const res = await fetch('/print', { method: 'POST', body: form });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.status === 'ok') {
-      showStatus('✅ 출력 완료!', 'ok');
+      showStatus(data.mock ? '🧪 미리보기 생성됨' : '✅ 출력 완료!', 'ok');
+      if (data.preview) {
+        const card = document.getElementById('previewCard');
+        const img = document.getElementById('preview');
+        img.src = data.preview + '?t=' + Date.now(); // 캐시 무력화
+        card.hidden = false;
+      }
     } else {
       showStatus('❌ 출력 실패: ' + (data.message || res.status), 'err');
     }

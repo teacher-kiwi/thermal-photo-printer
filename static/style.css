@@ -47,6 +47,16 @@ video {
   object-fit: cover;
 }
 
+#preview {
+  width: 100%;
+  max-width: 320px;
+  display: block;
+  margin: 0 auto;
+  border: 1px solid #e4e4e7;
+  border-radius: 6px;
+  image-rendering: pixelated;   /* 디더링 점이 뭉개지지 않게 */
+}
+
 .hint { font-size: 0.85rem; color: #71717a; margin: 10px 0 0; }
 .hint.err { color: #dc2626; }
 

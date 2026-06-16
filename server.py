@@ -13,7 +13,14 @@ import glob
 from flask import Flask, request, jsonify, render_template
 from PIL import Image, ImageEnhance
 import numpy as np
-from escpos.capabilities import CAPABILITIES
+
+# python-escpos는 실제 출력 시에만 필요. 목(mock) 모드에선 없어도 동작하도록 보호.
+try:
+    from escpos.capabilities import CAPABILITIES
+    _HAS_ESCPOS = True
+except Exception:
+    CAPABILITIES = None
+    _HAS_ESCPOS = False
 
 # ── 설정 ──────────────────────────────────────────
 # USB 프린터의 Vendor/Product ID. lsusb 로 확인 후 환경변수로 덮어쓸 수 있습니다.
@@ -33,8 +40,14 @@ PORT = int(os.environ.get("PORT", "3001"))
 CERT_FILE = os.environ.get("CERT_FILE", "cert.pem")
 KEY_FILE = os.environ.get("KEY_FILE", "key.pem")
 
+# 목(mock) 모드: 프린터 없이 출력될 모습을 PNG로 저장해 미리보기. (개발용)
+#   MOCK_PRINTER=1 ./venv/bin/python server.py
+MOCK_PRINTER = os.environ.get("MOCK_PRINTER", "") not in ("", "0", "false", "False")
+PREVIEW_DIR = os.path.join(os.path.dirname(__file__), "static", "preview")
+
 # ── 커스텀 프린터 프로파일 등록 (프린터 열기 전에 실행) ──
-CAPABILITIES["profiles"][PROFILE] = {
+if _HAS_ESCPOS:
+    CAPABILITIES["profiles"][PROFILE] = {
     "name": PROFILE,
     "vendor": "Custom",
     "media": {"dpi": 203, "width": {"mm": 80, "pixels": PRINT_WIDTH}},
@@ -148,13 +161,40 @@ def prepare_image(
     return img.convert("1")
 
 
+def save_preview(processed: Image.Image) -> str:
+    """출력될 1비트 이미지를 영수증 모양 PNG로 저장하고 정적 URL을 반환."""
+    import datetime
+
+    os.makedirs(PREVIEW_DIR, exist_ok=True)
+
+    # 흰 종이 위에 좌우 여백을 줘서 실제 영수증처럼 보이게
+    margin = 24
+    paper = Image.new("RGB", (processed.width + margin * 2, processed.height + margin * 2), "white")
+    paper.paste(processed.convert("RGB"), (margin, margin))
+
+    name = "receipt_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".png"
+    paper.save(os.path.join(PREVIEW_DIR, name))
+    # 최신본은 고정 이름으로도 저장 (빠른 확인용)
+    paper.save(os.path.join(PREVIEW_DIR, "latest.png"))
+    return "/static/preview/" + name
+
+
 def print_image(img: Image.Image):
-    """매 출력마다 연결을 열고 닫아 USB 핸들 꼬임을 방지한다."""
+    """사진을 출력한다. MOCK_PRINTER면 인쇄 대신 미리보기 PNG를 만든다.
+
+    실제 출력될 픽셀과 동일한 1비트 이미지를 미리보기로 저장하므로,
+    이미지 처리(밝기/감마/디더링) 결과를 프린터 없이 확인할 수 있다.
+    반환값: 목 모드면 미리보기 URL, 실제 출력이면 None.
+    """
+    processed = prepare_image(img)
+
+    if MOCK_PRINTER:
+        return save_preview(processed)
+
     p = open_printer()
     try:
-        img = prepare_image(img)
         p.set(align="center")
-        p.image(img)
+        p.image(processed)
         p.set(align="left")
         p.cut()
     finally:
@@ -162,6 +202,7 @@ def print_image(img: Image.Image):
             p.close()
         except Exception:
             pass
+    return None
 
 
 # ── Flask ─────────────────────────────────────────
@@ -180,8 +221,8 @@ def handle_print():
     try:
         file = request.files["image"]
         img = Image.open(io.BytesIO(file.read()))
-        print_image(img)
-        return jsonify({"status": "ok"})
+        preview = print_image(img)
+        return jsonify({"status": "ok", "preview": preview, "mock": MOCK_PRINTER})
     except Exception as e:
         app.logger.exception("출력 실패")
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -199,6 +240,8 @@ def main():
             "setup/gen-cert.sh 로 인증서를 만든 뒤 다시 실행하세요."
         )
 
+    if MOCK_PRINTER:
+        print("🧪 목(mock) 모드: 실제 인쇄 대신 static/preview/ 에 미리보기 PNG를 만듭니다.")
     print(f"--- 영수증 프린터 서버 시작: {scheme}://<라즈베리파이 IP>:{PORT} ---")
     app.run(host=HOST, port=PORT, ssl_context=ssl_context)
 
