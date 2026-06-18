@@ -25,13 +25,22 @@ def main():
     ap.add_argument("output", nargs="?", help="출력 PNG 경로 (기본: <입력>_preview.png)")
     ap.add_argument("--brightness", type=float, default=1.05)
     ap.add_argument("--gamma", type=float, default=1.8)
+    ap.add_argument("--dither", choices=["fs", "atkinson"], default="fs",
+                    help="fs=Floyd-Steinberg(기본), atkinson")
+    ap.add_argument("--no-auto", dest="auto", action="store_false",
+                    help="오토 레벨 끄고 --brightness/--gamma 고정값 사용")
+    ap.add_argument("--stretch", type=float, default=2.0,
+                    help="퍼센타일 스트레칭 강도%% (0이면 끔, 기본 2)")
+    ap.set_defaults(auto=True)
     args = ap.parse_args()
 
-    out = args.output or (args.image.rsplit(".", 1)[0] + "_preview.png")
+    suffix = f"_preview_{args.dither}" + ("_auto" if args.auto else "")
+    out = args.output or (args.image.rsplit(".", 1)[0] + suffix + ".png")
 
     img = Image.open(args.image)
     processed = prepare_image(
-        img, max_width=PRINT_WIDTH, brightness=args.brightness, gamma=args.gamma
+        img, max_width=PRINT_WIDTH, brightness=args.brightness,
+        gamma=args.gamma, dither=args.dither, auto=args.auto, stretch=args.stretch,
     )
     processed.save(out)
     print(f"미리보기 저장: {out}  ({processed.width}x{processed.height}, 1비트)")

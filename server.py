@@ -11,7 +11,7 @@ import os
 import glob
 
 from flask import Flask, request, jsonify, render_template
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageOps
 import numpy as np
 
 # python-escpos는 실제 출력 시에만 필요. 목(mock) 모드에선 없어도 동작하도록 보호.
@@ -44,6 +44,15 @@ KEY_FILE = os.environ.get("KEY_FILE", "key.pem")
 #   MOCK_PRINTER=1 ./venv/bin/python server.py
 MOCK_PRINTER = os.environ.get("MOCK_PRINTER", "") not in ("", "0", "false", "False")
 PREVIEW_DIR = os.path.join(os.path.dirname(__file__), "static", "preview")
+
+# 디더링 방식: "fs"(Floyd-Steinberg, 기본) 또는 "atkinson"
+#   DITHER=atkinson ./venv/bin/python server.py
+DITHER = os.environ.get("DITHER", "fs")
+
+# 오토 레벨: 사진 밝기에 맞춰 감마·밝기 자동 조절 (기본 켜짐). AUTO=0 이면 고정값 사용.
+AUTO_LEVELS = os.environ.get("AUTO", "1") not in ("0", "false", "False", "")
+# 퍼센타일 스트레칭 강도(%). 하위/상위 N%를 검정/흰색으로. 0이면 끔. (auto일 때 적용)
+STRETCH = float(os.environ.get("STRETCH", "2"))
 
 # ── 커스텀 프린터 프로파일 등록 (프린터 열기 전에 실행) ──
 if _HAS_ESCPOS:
@@ -131,34 +140,116 @@ def open_printer():
     )
 
 
+# ── 디더링 ────────────────────────────────────────
+def atkinson_dither(img_l: Image.Image) -> Image.Image:
+    """앳킨슨 디더링. 오차의 6/8만 확산(1/4 버림)해 점이 듬성하고 또렷하다.
+
+    열전사 프린터는 점이 번져 붙는 특성이 있어, 빽빽한 Floyd-Steinberg보다
+    점이 분리돼 남는 앳킨슨이 덜 뭉개지는 경우가 많다.
+    """
+    a = np.array(img_l, dtype=np.float32)
+    h, w = a.shape
+    for y in range(h):
+        row = a[y]
+        for x in range(w):
+            old = row[x]
+            new = 255.0 if old >= 128 else 0.0
+            err = (old - new) / 8.0
+            row[x] = new
+            # 이웃 6곳에 1/8씩 확산 (나머지 2/8은 버림)
+            if x + 1 < w:
+                row[x + 1] += err
+            if x + 2 < w:
+                row[x + 2] += err
+            if y + 1 < h:
+                if x - 1 >= 0:
+                    a[y + 1, x - 1] += err
+                a[y + 1, x] += err
+                if x + 1 < w:
+                    a[y + 1, x + 1] += err
+            if y + 2 < h:
+                a[y + 2, x] += err
+    # 처리 후 모든 픽셀이 0/255이므로 재디더링 없이 1비트로 변환
+    return Image.fromarray(a >= 128)
+
+
+# ── 오토 레벨 (사진별 동적 보정) ──────────────────
+def auto_levels(
+    arr: np.ndarray,
+    target: float = 0.60,
+    gamma_range=(1.0, 3.2),
+    bright_range=(0.85, 1.4),
+):
+    """그레이스케일 배열(0~255)의 평균 밝기를 보고 감마·밝기를 자동 산출.
+
+    - 어두운 사진일수록 감마를 크게(많이 들어올림), 밝은 사진은 작게.
+    - 감마 적용 후 평균을 다시 재서, 목표 밝기에 맞춰 선형 밝기를 보정.
+    반환: (gamma, brightness)
+    """
+    norm = arr / 255.0
+    m = float(np.clip(norm.mean(), 0.02, 0.98))      # 원본 평균 (log 안정화 위해 클램프)
+
+    # ① 평균을 목표로 보내는 감마:  target = m^(1/gamma)
+    gamma = float(np.log(m) / np.log(target))
+    gamma = float(np.clip(gamma, *gamma_range))
+
+    # ② 감마 적용 후 평균을 재측정 → 목표까지 선형 밝기로 보정
+    after_mean = float(np.clip((norm ** (1.0 / gamma)).mean(), 0.02, 1.0))
+    brightness = float(np.clip(target / after_mean, *bright_range))
+    return gamma, brightness
+
+
 # ── 이미지 전처리 ──────────────────────────────────
 def prepare_image(
     img: Image.Image,
     max_width: int = PRINT_WIDTH,
     brightness: float = 1.05,
     gamma: float = 1.8,
+    dither: str = "fs",
+    auto: bool = True,
+    stretch: float = 2.0,
 ) -> Image.Image:
     # EXIF 회전 보정 (스마트폰 사진은 회전정보가 들어있는 경우가 많음)
     try:
-        from PIL import ImageOps
-
         img = ImageOps.exif_transpose(img)
     except Exception:
         pass
+
+    # 투명(알파) 배경은 흰색으로 합성 → 영수증에서 검게 찍히지 않고 빈 공간으로 출력
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        img = img.convert("RGBA")
+        bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+        img = Image.alpha_composite(bg, img).convert("RGB")
 
     # 가로폭에 맞춰 리사이즈
     ratio = max_width / img.width
     img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
 
-    # 그레이스케일 + 밝기 + 감마 보정
+    # 그레이스케일
     img = img.convert("L")
-    img = ImageEnhance.Brightness(img).enhance(brightness)
+
+    # ⓪ 퍼센타일 스트레칭: 하위/상위 stretch% 를 검정/흰색으로 매핑해 대비를 일정하게.
+    #    히스토그램 기반이라 흰 배경 같은 아웃라이어에 강함. (auto일 때만)
+    if auto and stretch > 0:
+        img = ImageOps.autocontrast(img, cutoff=stretch)
+
     arr = np.array(img, dtype=np.float32)
+
+    # auto면 스트레칭된 결과의 밝기에 맞춰 감마·밝기를 동적으로 산출, 아니면 고정값 사용
+    if auto:
+        gamma, brightness = auto_levels(arr)
+        print(f"[auto] stretch={stretch}% gamma={gamma:.2f} brightness={brightness:.2f}")
+
+    # ① 감마: 그림자/중간톤을 비선형으로 들어올림
     arr = 255.0 * (arr / 255.0) ** (1.0 / gamma)
+    # ② 밝기: 전체를 선형으로 배수 (ImageEnhance.Brightness와 동일)
+    arr = np.clip(arr * brightness, 0, 255)
     img = Image.fromarray(arr.astype(np.uint8))
 
-    # Floyd-Steinberg 디더링 → 1비트
-    return img.convert("1")
+    # 디더링 → 1비트
+    if dither == "atkinson":
+        return atkinson_dither(img)
+    return img.convert("1")  # PIL 기본값 = Floyd-Steinberg
 
 
 def save_preview(processed: Image.Image) -> str:
@@ -186,7 +277,7 @@ def print_image(img: Image.Image):
     이미지 처리(밝기/감마/디더링) 결과를 프린터 없이 확인할 수 있다.
     반환값: 목 모드면 미리보기 URL, 실제 출력이면 None.
     """
-    processed = prepare_image(img)
+    processed = prepare_image(img, dither=DITHER, auto=AUTO_LEVELS, stretch=STRETCH)
 
     if MOCK_PRINTER:
         return save_preview(processed)
