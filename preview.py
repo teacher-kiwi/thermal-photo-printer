@@ -5,14 +5,14 @@
 밝기/감마/디더링 같은 이미지 처리를 프린터 없이 빠르게 튜닝할 때 사용하세요.
 
 사용법:
-    ./venv/bin/python preview.py 사진.jpg              # 사진_preview.png 생성
+    ./venv/bin/python preview.py 사진.jpg              # 사진_preview_fs_auto.png 생성
     ./venv/bin/python preview.py 사진.jpg out.png      # 파일명 지정
-    ./venv/bin/python preview.py 사진.jpg --brightness 1.2 --gamma 2.2
+    ./venv/bin/python preview.py 사진.jpg --dither bluenoise --sharpen 120
+    ./venv/bin/python preview.py 사진.jpg --no-auto --brightness 1.2 --gamma 2.2
 
 server.py 의 prepare_image() 를 그대로 쓰므로, server.py 를 고치면 결과도 같이 바뀝니다.
 """
 
-import sys
 import argparse
 
 from PIL import Image

@@ -146,53 +146,8 @@ document.getElementById('file').addEventListener('change', (e) => {
   if (file) uploadImage(file, file.name || 'photo.jpg');
 });
 
-// ── 실시간 카메라 (메인 페이지와 같은 방식으로 촬영) ──
-const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
-const camErr = document.getElementById('camErr');
-let facing = 'environment';
-let stream = null;
-
-async function startCamera() {
-  if (stream) stream.getTracks().forEach((t) => t.stop());
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    camErr.hidden = false;
-    camErr.textContent = '이 브라우저에서는 실시간 카메라를 쓸 수 없습니다. 위 "사진 고르기 / 촬영"을 이용하세요.';
-    return;
-  }
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: facing },
-      audio: false,
-    });
-    video.srcObject = stream;
-    camErr.hidden = true;
-  } catch (err) {
-    camErr.hidden = false;
-    camErr.textContent =
-      '카메라 접근 실패: ' + err.message +
-      ' (HTTP로 접속했다면 https:// 주소로 접속하고 인증서 경고를 허용하세요.)';
-  }
-}
-
-document.getElementById('capture').addEventListener('click', () => {
-  if (!stream || !video.videoWidth) {
-    showStatus('카메라가 아직 준비되지 않았습니다.', 'err');
-    return;
-  }
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext('2d').drawImage(video, 0, 0);
-  const name = '카메라 촬영 ' + new Date().toLocaleTimeString();
-  canvas.toBlob((blob) => blob && uploadImage(blob, name), 'image/jpeg', 0.92);
-});
-
-document.getElementById('flip').addEventListener('click', () => {
-  facing = facing === 'environment' ? 'user' : 'environment';
-  startCamera();
-});
-
-startCamera();
+// ── 실시간 카메라 (camera.js, 메인 페이지와 같은 방식으로 촬영) ──
+setupCamera((blob) => uploadImage(blob, '카메라 촬영 ' + new Date().toLocaleTimeString()));
 
 // 출력 미리보기를 누르면 실제 픽셀 크기(1:1) ↔ 화면 맞춤 전환
 resultImg.addEventListener('click', () => resultImg.classList.toggle('actual'));

@@ -1,10 +1,4 @@
-const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
 const statusEl = document.getElementById('status');
-const camErr = document.getElementById('camErr');
-
-let facing = 'environment';
-let stream = null;
 
 function showStatus(msg, kind) {
   statusEl.hidden = false;
@@ -37,40 +31,5 @@ document.getElementById('file').addEventListener('change', (e) => {
   e.target.value = '';
 });
 
-// ── 방법 2: 실시간 카메라 ──
-async function startCamera() {
-  if (stream) stream.getTracks().forEach((t) => t.stop());
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    camErr.hidden = false;
-    camErr.textContent = '이 브라우저에서는 실시간 카메라를 쓸 수 없습니다. 위 "사진 고르기"를 이용하세요.';
-    return;
-  }
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: facing },
-      audio: false,
-    });
-    video.srcObject = stream;
-    camErr.hidden = true;
-  } catch (err) {
-    camErr.hidden = false;
-    camErr.textContent =
-      '카메라 접근 실패: ' + err.message +
-      ' (HTTP로 접속했다면 https:// 주소로 접속하고 인증서 경고를 허용하세요.)';
-  }
-}
-
-document.getElementById('capture').addEventListener('click', () => {
-  if (!stream) return;
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext('2d').drawImage(video, 0, 0);
-  canvas.toBlob((blob) => blob && sendImage(blob), 'image/jpeg', 0.92);
-});
-
-document.getElementById('flip').addEventListener('click', () => {
-  facing = facing === 'environment' ? 'user' : 'environment';
-  startCamera();
-});
-
-startCamera();
+// ── 방법 2: 실시간 카메라 (camera.js) ──
+setupCamera(sendImage);

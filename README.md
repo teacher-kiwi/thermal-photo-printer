@@ -10,9 +10,12 @@ USB로 연결된 **ESC/POS 영수증 프린터(CPP-3100, 80mm)** 로 출력됩�
 ## 구성 파일
 | 파일 | 설명 |
 |------|------|
-| `server.py` | Flask 웹서버 + USB 프린터 출력 |
-| `templates/index.html`, `static/` | 스마트폰 웹 UI (사진 선택 + 실시간 카메라) |
+| `server.py` | Flask 웹서버 + 이미지 보정·디더링 + USB 프린터 출력 |
+| `templates/index.html`, `static/app.js` | 태블릿 웹 UI (사진 선택 + 실시간 카메라) |
 | `templates/admin.html`, `static/admin.js` | 보정값 조절 페이지 (`/admin`) |
+| `static/camera.js`, `static/style.css` | 두 페이지 공통 (실시간 카메라, 스타일) |
+| `print_test.py` | 웹서버 없이 프린터 연결만 테스트 |
+| `preview.py` | 명령줄에서 출력 미리보기 PNG 생성 |
 | `setup/hotspot.sh` | 와이파이 핫스팟 켜기 (NetworkManager) |
 | `setup/gen-cert.sh` | 실시간 카메라용 HTTPS 자체서명 인증서 생성 |
 | `setup/receipt-printer.service` | 부팅 시 서버 자동 실행 (systemd) |
