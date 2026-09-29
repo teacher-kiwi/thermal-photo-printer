@@ -9,6 +9,7 @@
 import io
 import os
 import glob
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, request, jsonify, render_template
 from PIL import Image, ImageOps
@@ -299,6 +300,10 @@ def print_image(img: Image.Image):
 # ── Flask ─────────────────────────────────────────
 app = Flask(__name__)
 
+# 출력 작업 큐: 워커 1개라 요청이 동시에 여러 개 와도 들어온 순서대로 하나씩 처리된다.
+# (프린터를 두 번 동시에 열어 충돌하거나 이미지가 섞여 찍히는 것을 막음)
+print_queue = ThreadPoolExecutor(max_workers=1)
+
 
 @app.route("/")
 def index():
@@ -312,7 +317,8 @@ def handle_print():
     try:
         file = request.files["image"]
         img = Image.open(io.BytesIO(file.read()))
-        preview = print_image(img)
+        # 큐에 넣고 내 차례의 출력이 끝날 때까지 대기
+        preview = print_queue.submit(print_image, img).result()
         return jsonify({"status": "ok", "preview": preview, "mock": MOCK_PRINTER})
     except Exception as e:
         app.logger.exception("출력 실패")
