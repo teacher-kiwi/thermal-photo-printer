@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>보정값 조절</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="admin">
+  <h1>🛠 보정값 조절</h1>
+  <p class="hint center">화면에서만 미리 보고, 실제로 출력하지 않습니다. <b>저장</b>을 눌러야 출력에 적용돼요.</p>
+
+  <div class="admin-grid">
+    <!-- 왼쪽: 사진 + 보정값 -->
+    <div>
+      <section class="card">
+        <h2>테스트 사진</h2>
+        <label class="btn" for="file">사진 고르기 / 촬영</label>
+        <input id="file" type="file" accept="image/*" hidden>
+        <p id="fileHint" class="hint">사진을 올리면 오른쪽에 출력 결과가 보입니다.</p>
+      </section>
+
+      <!-- 메인 페이지의 "실시간 카메라"와 같은 방식으로 촬영 (HTTPS 필요) -->
+      <section class="card">
+        <h2>실시간 카메라</h2>
+        <video id="video" autoplay playsinline muted></video>
+        <div class="row">
+          <button id="capture" class="btn">촬영해서 미리보기</button>
+          <button id="flip" class="btn ghost">카메라 전환</button>
+        </div>
+        <p class="hint">출력하지 않고 오른쪽 미리보기만 바뀝니다.</p>
+        <p id="camErr" class="hint err" hidden></p>
+      </section>
+      <canvas id="canvas" hidden></canvas>
+
+      <section class="card">
+        <h2>보정값</h2>
+
+        <label class="switch">
+          <input id="auto" type="checkbox">
+          <span>자동 보정 (사진 밝기에 맞춰 감마·밝기 자동 계산)</span>
+        </label>
+
+        <div class="field" data-mode="auto">
+          <div class="field-head"><span>목표 밝기</span><output id="targetOut"></output></div>
+          <input id="target" type="range" step="0.01">
+          <p class="hint">높을수록 전체가 밝게 찍힘</p>
+        </div>
+
+        <div class="field" data-mode="auto">
+          <div class="field-head"><span>대비 늘리기 (%)</span><output id="stretchOut"></output></div>
+          <input id="stretch" type="range" step="0.5">
+          <p class="hint">가장 어두운/밝은 N%를 검정/흰색으로. 0이면 끔</p>
+        </div>
+
+        <div class="field" data-mode="manual">
+          <div class="field-head"><span>밝기</span><output id="brightnessOut"></output></div>
+          <input id="brightness" type="range" step="0.05">
+        </div>
+
+        <div class="field" data-mode="manual">
+          <div class="field-head"><span>감마</span><output id="gammaOut"></output></div>
+          <input id="gamma" type="range" step="0.05">
+          <p class="hint">클수록 어두운 부분이 밝아짐</p>
+        </div>
+
+        <div class="field">
+          <div class="field-head"><span>샤프닝</span><output id="sharpenOut"></output></div>
+          <input id="sharpen" type="range" step="10">
+          <p class="hint">디더링 전에 윤곽을 살림. 0이면 끔 (80~150 정도가 무난)</p>
+        </div>
+
+        <div class="field">
+          <div class="field-head"><span>디더링</span></div>
+          <div class="segmented">
+            <label><input type="radio" name="dither" value="fs"><span>Floyd-Steinberg</span></label>
+            <label><input type="radio" name="dither" value="bluenoise"><span>블루 노이즈</span></label>
+            <label><input type="radio" name="dither" value="atkinson"><span>Atkinson</span></label>
+            <label><input type="radio" name="dither" value="jjn"><span>JJN</span></label>
+            <label><input type="radio" name="dither" value="stucki"><span>Stucki</span></label>
+            <label><input type="radio" name="dither" value="sierra"><span>Sierra</span></label>
+          </div>
+          <p id="ditherHint" class="hint"></p>
+        </div>
+
+        <div class="row">
+          <button id="save" class="btn">저장 (출력에 적용)</button>
+        </div>
+        <div class="row">
+          <button id="revert" class="btn ghost">저장된 값으로</button>
+          <button id="reset" class="btn ghost">기본값으로</button>
+        </div>
+        <p id="dirty" class="hint warn" hidden>저장하지 않은 변경이 있습니다.</p>
+      </section>
+    </div>
+
+    <!-- 오른쪽: 미리보기 -->
+    <section class="card preview-card">
+      <h2>출력 미리보기 <span id="busy" class="hint" hidden>계산 중…</span></h2>
+      <p id="applied" class="hint"></p>
+      <div id="empty" class="empty">사진을 먼저 올려주세요</div>
+      <div id="compare" class="compare" hidden>
+        <figure>
+          <figcaption>원본</figcaption>
+          <img id="original" alt="원본">
+        </figure>
+        <figure>
+          <figcaption>영수증 출력 <small>(누르면 실제 픽셀 크기)</small></figcaption>
+          <div class="paper"><img id="result" alt="출력 미리보기"></div>
+        </figure>
+      </div>
+    </section>
+  </div>
+
+  <div id="status" class="status" hidden></div>
+
+  <script src="/static/admin.js"></script>
+</body>
+</html>

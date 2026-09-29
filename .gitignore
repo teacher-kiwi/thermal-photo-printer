@@ -2,3 +2,5 @@ venv/
 __pycache__/
 *.pem
 static/preview/
+settings.json
+settings.json.tmp

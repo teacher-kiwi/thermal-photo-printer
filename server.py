@@ -9,13 +9,19 @@
 import io
 import os
 import glob
+import json
+import uuid
+import base64
+import threading
+from functools import lru_cache
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, request, jsonify, render_template
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageFilter
 import numpy as np
 
-# python-escpos는 실제 출력 시에만 필요. 목(mock) 모드에선 없어도 동작하도록 보호.
+# python-escpos는 실제 출력 시에만 필요. 없어도 /admin 미리보기는 동작하도록 보호.
 try:
     from escpos.capabilities import CAPABILITIES
     _HAS_ESCPOS = True
@@ -41,19 +47,69 @@ PORT = int(os.environ.get("PORT", "3001"))
 CERT_FILE = os.environ.get("CERT_FILE", "cert.pem")
 KEY_FILE = os.environ.get("KEY_FILE", "key.pem")
 
-# 목(mock) 모드: 프린터 없이 출력될 모습을 PNG로 저장해 미리보기. (개발용)
-#   MOCK_PRINTER=1 ./venv/bin/python server.py
-MOCK_PRINTER = os.environ.get("MOCK_PRINTER", "") not in ("", "0", "false", "False")
-PREVIEW_DIR = os.path.join(os.path.dirname(__file__), "static", "preview")
+# ── 이미지 보정 설정 (/admin 에서 조절 후 저장) ────
+# 저장값은 settings.json 에 보관. 기기마다 다르므로 git 에는 올리지 않는다.
+SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
-# 디더링 방식: "fs"(Floyd-Steinberg, 기본) 또는 "atkinson"
-#   DITHER=atkinson ./venv/bin/python server.py
-DITHER = os.environ.get("DITHER", "fs")
+DEFAULT_SETTINGS = {
+    "auto": True,        # 오토 레벨: 사진 밝기에 맞춰 감마·밝기 자동 산출
+    "target": 0.60,      # (auto) 목표 평균 밝기 0~1. 높을수록 밝게 출력
+    "stretch": 2.0,      # (auto) 퍼센타일 스트레칭 %. 하위/상위 N%를 검정/흰색으로. 0이면 끔
+    "brightness": 1.05,  # (수동) 선형 밝기 배수
+    "gamma": 1.8,        # (수동) 감마. 클수록 그림자/중간톤이 밝아짐
+    "sharpen": 0.0,      # 디더링 전 샤프닝 강도 %. 0이면 끔 (80~150 정도가 무난)
+    "dither": "fs",      # 디더링 방식 (DITHER_MODES 참고)
+}
 
-# 오토 레벨: 사진 밝기에 맞춰 감마·밝기 자동 조절 (기본 켜짐). AUTO=0 이면 고정값 사용.
-AUTO_LEVELS = os.environ.get("AUTO", "1") not in ("0", "false", "False", "")
-# 퍼센타일 스트레칭 강도(%). 하위/상위 N%를 검정/흰색으로. 0이면 끔. (auto일 때 적용)
-STRETCH = float(os.environ.get("STRETCH", "2"))
+# 설정값 허용 범위 (최소, 최대) — 관리 페이지 슬라이더 범위와 동일
+SETTING_RANGES = {
+    "target": (0.30, 0.85),
+    "stretch": (0.0, 10.0),
+    "brightness": (0.5, 2.0),
+    "gamma": (0.5, 4.0),
+    "sharpen": (0.0, 300.0),
+}
+DITHER_MODES = ("fs", "atkinson", "jjn", "stucki", "sierra", "bluenoise")
+
+
+def clean_settings(data) -> dict:
+    """입력값을 검증해 허용 범위 안의 완전한 설정 dict로 만든다. 빠진 값은 기본값."""
+    s = dict(DEFAULT_SETTINGS)
+    if not isinstance(data, dict):
+        return s
+    if "auto" in data:
+        s["auto"] = bool(data["auto"])
+    for key, (lo, hi) in SETTING_RANGES.items():
+        if key in data:
+            try:
+                s[key] = min(max(float(data[key]), lo), hi)
+            except (TypeError, ValueError):
+                pass
+    if data.get("dither") in DITHER_MODES:
+        s["dither"] = data["dither"]
+    return s
+
+
+def load_settings() -> dict:
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            return clean_settings(json.load(f))
+    except FileNotFoundError:
+        return dict(DEFAULT_SETTINGS)
+    except Exception as e:
+        print(f"⚠ settings.json 을 읽지 못해 기본값을 사용합니다: {e}")
+        return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(s: dict):
+    tmp = SETTINGS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(s, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, SETTINGS_FILE)  # 저장 도중 꺼져도 파일이 깨지지 않게
+
+
+# 현재 출력에 쓰이는 설정. 저장 시 dict 통째로 교체하므로 읽는 쪽은 잠금 불필요.
+settings = load_settings()
 
 # ── 커스텀 프린터 프로파일 등록 (프린터 열기 전에 실행) ──
 if _HAS_ESCPOS:
@@ -142,36 +198,151 @@ def open_printer():
 
 
 # ── 디더링 ────────────────────────────────────────
-def atkinson_dither(img_l: Image.Image) -> Image.Image:
-    """앳킨슨 디더링. 오차의 6/8만 확산(1/4 버림)해 점이 듬성하고 또렷하다.
+# 오차 확산 커널: (나눌 값, [(dy, dx, 가중치), ...])  — 현재 픽셀 기준 오른쪽/아래로만 퍼뜨림
+ERROR_KERNELS = {
+    # 오차의 6/8만 확산(1/4 버림) → 점이 듬성하고 또렷, 대비 강함
+    "atkinson": (8, [
+        (0, 1, 1), (0, 2, 1),
+        (1, -1, 1), (1, 0, 1), (1, 1, 1),
+        (2, 0, 1),
+    ]),
+    # Jarvis-Judice-Ninke: 3줄에 넓게 퍼뜨려 계조가 부드러움
+    "jjn": (48, [
+        (0, 1, 7), (0, 2, 5),
+        (1, -2, 3), (1, -1, 5), (1, 0, 7), (1, 1, 5), (1, 2, 3),
+        (2, -2, 1), (2, -1, 3), (2, 0, 5), (2, 1, 3), (2, 2, 1),
+    ]),
+    # Stucki: JJN과 비슷하지만 조금 더 선명
+    "stucki": (42, [
+        (0, 1, 8), (0, 2, 4),
+        (1, -2, 2), (1, -1, 4), (1, 0, 8), (1, 1, 4), (1, 2, 2),
+        (2, -2, 1), (2, -1, 2), (2, 0, 4), (2, 1, 2), (2, 2, 1),
+    ]),
+    # Sierra(3줄): JJN과 비슷한 품질, 탭이 조금 적음
+    "sierra": (32, [
+        (0, 1, 5), (0, 2, 3),
+        (1, -2, 2), (1, -1, 4), (1, 0, 5), (1, 1, 4), (1, 2, 2),
+        (2, -1, 2), (2, 0, 3), (2, 1, 2),
+    ]),
+}
 
-    열전사 프린터는 점이 번져 붙는 특성이 있어, 빽빽한 Floyd-Steinberg보다
-    점이 분리돼 남는 앳킨슨이 덜 뭉개지는 경우가 많다.
+
+def error_diffusion(img_l: Image.Image, kernel: str) -> Image.Image:
+    """오차 확산 디더링 (numpy, 대각선 단위 병렬 처리).
+
+    픽셀을 하나씩 도는 대신 x + 3y 가 같은 픽셀들을 한 번에 처리한다.
+    커널은 오른쪽 2칸 / 아래 2줄(좌우 2칸)까지만 퍼뜨리므로, 어떤 픽셀에 오차를 주는
+    픽셀은 항상 x + 3y 값이 더 작다 → 앞 단계에서 이미 끝나 있음.
+    그래서 결과는 한 픽셀씩 순서대로 처리한 것과 같고, 반복 횟수만
+    (가로×세로) → (가로 + 3×세로) 로 줄어든다.
     """
-    a = np.array(img_l, dtype=np.float32)
+    div, taps = ERROR_KERNELS[kernel]
+    taps = [(dy, dx, wt / div) for dy, dx, wt in taps]
+
+    a = np.asarray(img_l, dtype=np.float32)
     h, w = a.shape
-    for y in range(h):
-        row = a[y]
-        for x in range(w):
-            old = row[x]
-            new = 255.0 if old >= 128 else 0.0
-            err = (old - new) / 8.0
-            row[x] = new
-            # 이웃 6곳에 1/8씩 확산 (나머지 2/8은 버림)
-            if x + 1 < w:
-                row[x + 1] += err
-            if x + 2 < w:
-                row[x + 2] += err
-            if y + 1 < h:
-                if x - 1 >= 0:
-                    a[y + 1, x - 1] += err
-                a[y + 1, x] += err
-                if x + 1 < w:
-                    a[y + 1, x + 1] += err
-            if y + 2 < h:
-                a[y + 2, x] += err
-    # 처리 후 모든 픽셀이 0/255이므로 재디더링 없이 1비트로 변환
-    return Image.fromarray(a >= 128)
+    pad = 2  # 가장자리 밖으로 나가는 오차를 받아서 버릴 여백
+    buf = np.zeros((h + pad, w + 2 * pad), dtype=np.float32)
+    buf[:h, pad:pad + w] = a
+    out = np.zeros((h, w), dtype=bool)
+
+    rows = np.arange(h)
+    for t in range(w + 3 * (h - 1)):
+        y0 = max(0, -(-(t - w + 1) // 3))  # ceil((t - w + 1) / 3)
+        y1 = min(h - 1, t // 3)
+        ys = rows[y0:y1 + 1]
+        xs = t - 3 * ys + pad
+
+        v = buf[ys, xs]
+        on = v >= 128
+        out[ys, xs - pad] = on
+        err = v - np.where(on, 255.0, 0.0).astype(np.float32)
+        for dy, dx, wt in taps:
+            buf[ys + dy, xs + dx] += err * wt
+
+    return Image.fromarray(out)
+
+
+@lru_cache(maxsize=1)
+def blue_noise_mask(n: int = 64, sigma: float = 1.5, seed: int = 7) -> np.ndarray:
+    """void-and-cluster 방식으로 n×n 블루 노이즈 임계값 마스크(0~255)를 만든다.
+
+    처음 한 번만 계산하고(라즈베리파이에서 수 초) 이후엔 캐시를 쓴다.
+    """
+    N = n * n
+    rng = np.random.default_rng(seed)
+
+    # (0,0) 중심의 가우시안. 가장자리가 반대편과 이어지도록(타일링) 거리를 계산
+    d = np.minimum(np.arange(n), n - np.arange(n)).astype(np.float64)
+    kern = np.exp(-(d[:, None] ** 2 + d[None, :] ** 2) / (2 * sigma ** 2))
+
+    def splat(E, idx, sign):
+        y, x = divmod(int(idx), n)
+        E += sign * np.roll(kern, (y, x), axis=(0, 1))
+
+    def tightest_cluster(B, E):  # 점(1)들 중 주변이 가장 빽빽한 곳
+        return int(np.where(B, E.ravel(), -np.inf).argmax())
+
+    def largest_void(B, E):  # 빈칸(0)들 중 주변이 가장 비어 있는 곳
+        return int(np.where(B, np.inf, E.ravel()).argmin())
+
+    # ① 초기 패턴: 무작위 10% → 가장 빽빽한 점을 가장 빈 곳으로 옮기며 고르게 정리
+    B = np.zeros(N, dtype=bool)
+    B[rng.choice(N, N // 10, replace=False)] = True
+    E = np.zeros((n, n))
+    for i in np.flatnonzero(B):
+        splat(E, i, +1)
+    for _ in range(N):
+        c = tightest_cluster(B, E)
+        B[c] = False
+        splat(E, c, -1)
+        v = largest_void(B, E)
+        B[v] = True
+        splat(E, v, +1)
+        if v == c:
+            break
+
+    rank = np.zeros(N, dtype=np.int64)
+    proto_B, proto_E, ones = B.copy(), E.copy(), int(B.sum())
+
+    # ② 초기 점들에 순위 매기기: 빽빽한 곳부터 빼면서 큰 순위 → 작은 순위
+    for r in range(ones - 1, -1, -1):
+        c = tightest_cluster(B, E)
+        B[c] = False
+        splat(E, c, -1)
+        rank[c] = r
+
+    # ③ 나머지 빈칸 채우기: 가장 빈 곳부터 채우면서 순위 부여
+    B, E = proto_B, proto_E
+    for r in range(ones, N):
+        v = largest_void(B, E)
+        B[v] = True
+        splat(E, v, +1)
+        rank[v] = r
+
+    return ((rank.reshape(n, n) + 0.5) / N * 255.0).astype(np.float32)
+
+
+def blue_noise_dither(img_l: Image.Image) -> Image.Image:
+    """블루 노이즈 디더링: 마스크를 바둑판처럼 깔고 픽셀 값과 비교만 한다 (매우 빠름).
+
+    점이 고르게 흩어져 FS의 벌레 모양 무늬가 없고, 열전사 번짐에도 강하다.
+    """
+    a = np.asarray(img_l, dtype=np.float32)
+    h, w = a.shape
+    mask = blue_noise_mask()
+    n = mask.shape[0]
+    tiled = np.tile(mask, (-(-h // n), -(-w // n)))[:h, :w]
+    return Image.fromarray(a > tiled)
+
+
+def dither_image(img_l: Image.Image, mode: str) -> Image.Image:
+    """그레이스케일 → 1비트."""
+    if mode in ERROR_KERNELS:
+        return error_diffusion(img_l, mode)
+    if mode == "bluenoise":
+        return blue_noise_dither(img_l)
+    return img_l.convert("1")  # "fs": PIL 기본값 = Floyd-Steinberg (C 구현)
 
 
 # ── 오토 레벨 (사진별 동적 보정) ──────────────────
@@ -201,15 +372,12 @@ def auto_levels(
 
 
 # ── 이미지 전처리 ──────────────────────────────────
-def prepare_image(
-    img: Image.Image,
-    max_width: int = PRINT_WIDTH,
-    brightness: float = 1.05,
-    gamma: float = 1.8,
-    dither: str = "fs",
-    auto: bool = True,
-    stretch: float = 2.0,
-) -> Image.Image:
+def normalize_image(img: Image.Image, max_width: int = PRINT_WIDTH) -> Image.Image:
+    """1단계: 회전·투명 배경 처리 후 출력 폭에 맞춰 축소한 RGB/L 이미지.
+
+    보정값과 무관한 단계라, /admin 미리보기는 이 결과를 캐시해 두고
+    슬라이더를 움직일 때마다 2단계(adjust_image)만 다시 돌린다.
+    """
     # EXIF 회전 보정 (스마트폰 사진은 회전정보가 들어있는 경우가 많음)
     try:
         img = ImageOps.exif_transpose(img)
@@ -221,13 +389,34 @@ def prepare_image(
         img = img.convert("RGBA")
         bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
         img = Image.alpha_composite(bg, img).convert("RGB")
+    elif img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
 
     # 가로폭에 맞춰 리사이즈
     ratio = max_width / img.width
-    img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+    return img.resize((max_width, max(1, int(img.height * ratio))), Image.LANCZOS)
 
+
+def adjust_image(
+    img: Image.Image,
+    brightness: float = 1.05,
+    gamma: float = 1.8,
+    dither: str = "fs",
+    auto: bool = True,
+    stretch: float = 2.0,
+    target: float = 0.60,
+    sharpen: float = 0.0,
+):
+    """2단계: 그레이스케일 → 샤프닝 → 보정 → 디더링.
+
+    반환: (1비트 이미지, 실제 적용된 gamma, 실제 적용된 brightness)
+    """
     # 그레이스케일
     img = img.convert("L")
+
+    # 샤프닝: 576px로 줄이며 흐려진 윤곽을 살림 (디더링 후 형태가 또렷해짐)
+    if sharpen > 0:
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=int(sharpen), threshold=2))
 
     # ⓪ 퍼센타일 스트레칭: 하위/상위 stretch% 를 검정/흰색으로 매핑해 대비를 일정하게.
     #    히스토그램 기반이라 흰 배경 같은 아웃라이어에 강함. (auto일 때만)
@@ -238,8 +427,7 @@ def prepare_image(
 
     # auto면 스트레칭된 결과의 밝기에 맞춰 감마·밝기를 동적으로 산출, 아니면 고정값 사용
     if auto:
-        gamma, brightness = auto_levels(arr)
-        print(f"[auto] stretch={stretch}% gamma={gamma:.2f} brightness={brightness:.2f}")
+        gamma, brightness = auto_levels(arr, target=target)
 
     # ① 감마: 그림자/중간톤을 비선형으로 들어올림
     arr = 255.0 * (arr / 255.0) ** (1.0 / gamma)
@@ -248,40 +436,32 @@ def prepare_image(
     img = Image.fromarray(arr.astype(np.uint8))
 
     # 디더링 → 1비트
-    if dither == "atkinson":
-        return atkinson_dither(img)
-    return img.convert("1")  # PIL 기본값 = Floyd-Steinberg
+    return dither_image(img, dither), gamma, brightness
 
 
-def save_preview(processed: Image.Image) -> str:
-    """출력될 1비트 이미지를 영수증 모양 PNG로 저장하고 정적 URL을 반환."""
-    import datetime
-
-    os.makedirs(PREVIEW_DIR, exist_ok=True)
-
-    # 흰 종이 위에 좌우 여백을 줘서 실제 영수증처럼 보이게
-    margin = 24
-    paper = Image.new("RGB", (processed.width + margin * 2, processed.height + margin * 2), "white")
-    paper.paste(processed.convert("RGB"), (margin, margin))
-
-    name = "receipt_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".png"
-    paper.save(os.path.join(PREVIEW_DIR, name))
-    # 최신본은 고정 이름으로도 저장 (빠른 확인용)
-    paper.save(os.path.join(PREVIEW_DIR, "latest.png"))
-    return "/static/preview/" + name
+def prepare_image(
+    img: Image.Image,
+    max_width: int = PRINT_WIDTH,
+    brightness: float = 1.05,
+    gamma: float = 1.8,
+    dither: str = "fs",
+    auto: bool = True,
+    stretch: float = 2.0,
+    target: float = 0.60,
+    sharpen: float = 0.0,
+) -> Image.Image:
+    """1단계 + 2단계. 원본 사진 → 영수증에 찍힐 1비트 이미지."""
+    out, _, _ = adjust_image(
+        normalize_image(img, max_width),
+        brightness=brightness, gamma=gamma, dither=dither,
+        auto=auto, stretch=stretch, target=target, sharpen=sharpen,
+    )
+    return out
 
 
 def print_image(img: Image.Image):
-    """사진을 출력한다. MOCK_PRINTER면 인쇄 대신 미리보기 PNG를 만든다.
-
-    실제 출력될 픽셀과 동일한 1비트 이미지를 미리보기로 저장하므로,
-    이미지 처리(밝기/감마/디더링) 결과를 프린터 없이 확인할 수 있다.
-    반환값: 목 모드면 미리보기 URL, 실제 출력이면 None.
-    """
-    processed = prepare_image(img, dither=DITHER, auto=AUTO_LEVELS, stretch=STRETCH)
-
-    if MOCK_PRINTER:
-        return save_preview(processed)
+    """현재 저장된 보정 설정으로 사진을 출력한다."""
+    processed = prepare_image(img, **settings)
 
     p = open_printer()
     try:
@@ -294,11 +474,13 @@ def print_image(img: Image.Image):
             p.close()
         except Exception:
             pass
-    return None
 
 
 # ── Flask ─────────────────────────────────────────
 app = Flask(__name__)
+# 템플릿(html)을 고치면 서버 재시작 없이 바로 반영. (기본값은 첫 로딩 후 캐시라
+# static/*.js 만 새 버전이 되고 html 은 옛 버전으로 남아 서로 어긋날 수 있음)
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 # 출력 작업 큐: 워커 1개라 요청이 동시에 여러 개 와도 들어온 순서대로 하나씩 처리된다.
 # (프린터를 두 번 동시에 열어 충돌하거나 이미지가 섞여 찍히는 것을 막음)
@@ -318,14 +500,94 @@ def handle_print():
         file = request.files["image"]
         img = Image.open(io.BytesIO(file.read()))
         # 큐에 넣고 내 차례의 출력이 끝날 때까지 대기
-        preview = print_queue.submit(print_image, img).result()
-        return jsonify({"status": "ok", "preview": preview, "mock": MOCK_PRINTER})
+        print_queue.submit(print_image, img).result()
+        return jsonify({"status": "ok"})
     except Exception as e:
         app.logger.exception("출력 실패")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+# ── 관리 페이지: 보정값 조절 + 화면 미리보기 (출력하지 않음) ──
+# 업로드한 사진은 1단계(normalize) 결과만 메모리에 잠깐 보관해 두고,
+# 슬라이더를 움직일 때마다 2단계만 다시 계산한다. (최근 몇 장만 유지)
+_admin_images = OrderedDict()
+_admin_images_lock = threading.Lock()
+ADMIN_CACHE_SIZE = 5
+
+
+@app.route("/admin")
+def admin():
+    return render_template("admin.html")
+
+
+@app.route("/admin/settings", methods=["GET"])
+def admin_get_settings():
+    return jsonify({
+        "settings": settings,
+        "defaults": DEFAULT_SETTINGS,
+        "ranges": SETTING_RANGES,
+    })
+
+
+@app.route("/admin/settings", methods=["POST"])
+def admin_save_settings():
+    global settings
+    new = clean_settings(request.get_json(silent=True))
+    try:
+        save_settings(new)
+    except Exception as e:
+        app.logger.exception("설정 저장 실패")
+        return jsonify({"status": "error", "message": str(e)}), 500
+    settings = new
+    print(f"[admin] 설정 저장: {new}")
+    return jsonify({"status": "ok", "settings": new})
+
+
+@app.route("/admin/upload", methods=["POST"])
+def admin_upload():
+    if "image" not in request.files:
+        return jsonify({"status": "error", "message": "이미지가 없습니다."}), 400
+    try:
+        img = Image.open(io.BytesIO(request.files["image"].read()))
+        base = normalize_image(img)
+    except Exception as e:
+        app.logger.exception("미리보기 이미지 처리 실패")
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+    image_id = uuid.uuid4().hex
+    with _admin_images_lock:
+        _admin_images[image_id] = base
+        while len(_admin_images) > ADMIN_CACHE_SIZE:
+            _admin_images.popitem(last=False)
+    return jsonify({"status": "ok", "id": image_id})
+
+
+@app.route("/admin/preview", methods=["POST"])
+def admin_preview():
+    data = request.get_json(silent=True) or {}
+    with _admin_images_lock:
+        base = _admin_images.get(data.get("id"))
+    if base is None:
+        return jsonify({"status": "error", "message": "사진을 다시 올려주세요."}), 404
+
+    s = clean_settings(data.get("settings"))
+    out, gamma, brightness = adjust_image(base, **s)
+    buf = io.BytesIO()
+    out.save(buf, format="PNG")
+    return jsonify({
+        "status": "ok",
+        "image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
+        "width": out.width,
+        "height": out.height,
+        "gamma": gamma,
+        "brightness": brightness,
+    })
+
+
 def main():
+    # 블루 노이즈 마스크는 첫 계산에 수 초 걸리므로 서버 시작 시 미리 만들어 둠
+    threading.Thread(target=blue_noise_mask, daemon=True).start()
+
     ssl_context = None
     if os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE):
         ssl_context = (CERT_FILE, KEY_FILE)
@@ -337,9 +599,8 @@ def main():
             "setup/gen-cert.sh 로 인증서를 만든 뒤 다시 실행하세요."
         )
 
-    if MOCK_PRINTER:
-        print("🧪 목(mock) 모드: 실제 인쇄 대신 static/preview/ 에 미리보기 PNG를 만듭니다.")
     print(f"--- 영수증 프린터 서버 시작: {scheme}://<라즈베리파이 IP>:{PORT} ---")
+    print(f"    보정값 조절: {scheme}://<라즈베리파이 IP>:{PORT}/admin")
     app.run(host=HOST, port=PORT, ssl_context=ssl_context)
 
 

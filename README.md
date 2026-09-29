@@ -12,6 +12,7 @@ USB로 연결된 **ESC/POS 영수증 프린터(CPP-3100, 80mm)** 로 출력됩�
 |------|------|
 | `server.py` | Flask 웹서버 + USB 프린터 출력 |
 | `templates/index.html`, `static/` | 스마트폰 웹 UI (사진 선택 + 실시간 카메라) |
+| `templates/admin.html`, `static/admin.js` | 보정값 조절 페이지 (`/admin`) |
 | `setup/hotspot.sh` | 와이파이 핫스팟 켜기 (NetworkManager) |
 | `setup/gen-cert.sh` | 실시간 카메라용 HTTPS 자체서명 인증서 생성 |
 | `setup/receipt-printer.service` | 부팅 시 서버 자동 실행 (systemd) |
@@ -98,28 +99,33 @@ journalctl -u receipt-printer -f      # 로그 확인
 
 ---
 
-## 개발 / 미리보기 (프린터·파이 없이)
+## 보정값 조절 (`/admin`)
 
-페이지 UI나 출력물(밝기·감마·디더링)을 **노트북에서 미리 보며 수정**할 수 있습니다.
-영수증에 찍히는 건 `prepare_image()`가 만드는 576px 1비트 이미지라서, 그걸 PNG로 보면 실제 출력물과 거의 동일합니다.
+브라우저에서 **`https://10.42.0.1:3001/admin`** 에 접속하면 출력하지 않고 화면으로만 결과를 보면서
+밝기·감마·디더링 같은 보정값을 조절할 수 있습니다.
 
-### 1) 목(mock) 모드로 웹서버 실행
+1. "사진 고르기 / 촬영"으로 테스트 사진을 올리거나, **실시간 카메라**에서 "촬영해서 미리보기"
+   (메인 페이지와 같은 방식으로 촬영하지만 출력은 하지 않음. HTTPS 필요)
+2. 슬라이더를 움직이면 오른쪽에 **영수증에 실제로 찍힐 1비트 이미지**가 바로 갱신됨
+   (출력 미리보기를 누르면 실제 픽셀 크기로 확대)
+3. 마음에 들면 **저장** → 다음 출력부터 적용
+
+| 항목 | 설명 |
+|------|------|
+| 자동 보정 | 켜면 사진마다 감마·밝기를 자동 계산 (목표 밝기, 대비 늘리기로 조절) |
+| 밝기 / 감마 | 자동 보정을 끄면 이 고정값을 사용 |
+| 샤프닝 | 디더링 전에 윤곽을 살림 (0이면 끔) |
+| 디더링 | Floyd-Steinberg(기본) / 블루 노이즈 / Atkinson / JJN / Stucki / Sierra |
+
+- 저장값은 `settings.json` 에 보관됩니다. 기기마다 다른 값이라 git 에는 올라가지 않습니다(`.gitignore`).
+- 맥에서도 `./venv/bin/python server.py` 로 띄우고 `http://localhost:3001/admin` 에서 똑같이 쓸 수 있습니다.
+  (프린터 없이 미리보기만 됨)
+
+### 명령 한 줄로 미리보기
 ```bash
-MOCK_PRINTER=1 ./venv/bin/python server.py
+./venv/bin/python preview.py 사진.jpg                       # 사진_preview_fs_auto.png 생성
+./venv/bin/python preview.py 사진.jpg --no-auto --brightness 1.2 --gamma 2.2
 ```
-- 브라우저로 `http://localhost:3001` 접속 (목 모드는 HTTP로도 충분)
-- 사진을 고르고 "출력"을 누르면 인쇄 대신 **"출력 미리보기"** 이미지가 페이지에 표시됨
-- 결과 PNG는 `static/preview/` 에 저장 (최신본은 `static/preview/latest.png`)
-
-### 2) 명령 한 줄로 빠르게 튜닝
-```bash
-./venv/bin/python preview.py 사진.jpg                       # 사진_preview.png 생성
-./venv/bin/python preview.py 사진.jpg --brightness 1.2 --gamma 2.2
-```
-마음에 드는 `--brightness`/`--gamma` 값을 찾았으면, `server.py` 의 `prepare_image()` 기본값에 반영하세요.
-
-> 목 모드는 `python-escpos`/USB 없이도 돌아갑니다. UI·이미지 처리만 손볼 땐 이 모드로 반복하고,
-> 다 됐을 때 파이에 올려 실제 출력으로 최종 확인하면 됩니다.
 
 ## 문제 해결
 | 증상 | 확인 |
@@ -127,5 +133,5 @@ MOCK_PRINTER=1 ./venv/bin/python server.py
 | `프린터를 찾지 못했습니다` | `lsusb` 확인 → `PRINTER_VID`/`PRINTER_PID` 환경변수나 udev 규칙 설정 |
 | 권한 오류(USB) | udev 규칙 적용 + USB 재연결, 또는 서비스를 `User=root` 로 변경 |
 | 카메라가 안 켜짐 | `http://` 가 아니라 `https://` 로 접속했는지, 인증서 경고를 허용했는지 확인 |
-| 출력이 너무 진하다/연하다 | `server.py` 의 `prepare_image` 에서 `brightness`, `gamma` 값 조정 |
+| 출력이 너무 진하다/연하다 | `/admin` 에서 보정값 조절 후 저장 |
 | 사진이 옆으로 누움 | EXIF 자동 회전 처리됨. 그래도 이상하면 촬영 방향 확인 |

@@ -16,7 +16,7 @@ import sys
 import argparse
 
 from PIL import Image
-from server import prepare_image, PRINT_WIDTH
+from server import prepare_image, PRINT_WIDTH, DITHER_MODES
 
 
 def main():
@@ -25,12 +25,16 @@ def main():
     ap.add_argument("output", nargs="?", help="출력 PNG 경로 (기본: <입력>_preview.png)")
     ap.add_argument("--brightness", type=float, default=1.05)
     ap.add_argument("--gamma", type=float, default=1.8)
-    ap.add_argument("--dither", choices=["fs", "atkinson"], default="fs",
-                    help="fs=Floyd-Steinberg(기본), atkinson")
+    ap.add_argument("--dither", choices=DITHER_MODES, default="fs",
+                    help="fs=Floyd-Steinberg(기본), bluenoise, atkinson, jjn, stucki, sierra")
+    ap.add_argument("--sharpen", type=float, default=0.0,
+                    help="디더링 전 샤프닝 강도%% (0이면 끔)")
     ap.add_argument("--no-auto", dest="auto", action="store_false",
                     help="오토 레벨 끄고 --brightness/--gamma 고정값 사용")
     ap.add_argument("--stretch", type=float, default=2.0,
                     help="퍼센타일 스트레칭 강도%% (0이면 끔, 기본 2)")
+    ap.add_argument("--target", type=float, default=0.60,
+                    help="오토 레벨 목표 평균 밝기 0~1 (기본 0.60)")
     ap.set_defaults(auto=True)
     args = ap.parse_args()
 
@@ -41,6 +45,7 @@ def main():
     processed = prepare_image(
         img, max_width=PRINT_WIDTH, brightness=args.brightness,
         gamma=args.gamma, dither=args.dither, auto=args.auto, stretch=args.stretch,
+        target=args.target, sharpen=args.sharpen,
     )
     processed.save(out)
     print(f"미리보기 저장: {out}  ({processed.width}x{processed.height}, 1비트)")
