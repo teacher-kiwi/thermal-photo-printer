@@ -2,6 +2,7 @@ const statusEl = document.getElementById('status');
 const printingEl = document.getElementById('printing');
 const author = setupAuthorName();
 const likes = setupLikes();
+setupHashtags();
 
 let statusTimer = null;
 function showStatus(msg, kind) {

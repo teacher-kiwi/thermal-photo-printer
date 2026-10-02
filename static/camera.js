@@ -110,25 +110,15 @@ function setupCamera(onCapture, options = {}) {
   };
 }
 
-// 작성자 이름 입력칸: 프로필 원에 첫 글자 표시.
-// 비워두면 기본 이름(data-default, 관리 페이지에서 저장)이 흐린 글씨로 보이고 그대로 출력된다.
+// 작성자 이름 입력칸.
+// 비워두면 기본 이름(관리 페이지에서 저장)이 흐린 글씨로 보이고 그대로 출력된다.
 // onChange(name): 이름이 바뀔 때 호출 (선택).
 // 반환값: { get(): 입력한 이름, clear(): 이름 지우기, setDefault(name): 기본 이름 변경 }
 function setupAuthorName(onChange) {
   const input = document.getElementById('authorName');
-  const initial = document.getElementById('avatarInitial');
-
-  function refresh() {
-    const name = input.value.trim();
-    const shown = name || input.dataset.default || '';
-    initial.textContent = shown ? Array.from(shown)[0] : '';
-    return name;
-  }
-  refresh();
 
   input.addEventListener('input', () => {
-    const name = refresh();
-    if (onChange) onChange(name);
+    if (onChange) onChange(input.value.trim());
   });
   // 입력 끝나면 키보드 닫기
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
@@ -137,13 +127,10 @@ function setupAuthorName(onChange) {
     get: () => input.value.trim(),
     clear() {
       input.value = '';
-      refresh();
       if (onChange) onChange('');
     },
     setDefault(name) {
-      input.dataset.default = name;
       input.placeholder = name || '이름 입력';
-      refresh();
     },
   };
 }
@@ -189,6 +176,42 @@ function setupLikes() {
       // 범위가 바뀌어 지금 숫자가 벗어나면 새로 뽑기
       if (n < Math.min(min, max) || n > Math.max(min, max)) reroll();
       else render();
+    },
+  };
+}
+
+// 해시태그 (_post.html #tagsBox). server.py hashtag_lines 와 같은 규칙:
+// per-line 개씩 한 줄로 묶고, 화면 폭이 모자라면 태그 "사이"에서만 줄바꿈 (태그 중간은 안 끊김)
+// 반환값: { setConfig(tags, perLine) }
+function setupHashtags() {
+  const el = document.getElementById('tagsBox');
+  let tags = [];
+  let perLine = 3;
+  try { tags = JSON.parse(el.dataset.tags || '[]'); } catch (e) { tags = []; }
+  perLine = parseInt(el.dataset.perLine, 10) || 3;
+
+  function render() {
+    el.replaceChildren();
+    for (let i = 0; i < tags.length; i += perLine) {
+      const line = document.createElement('div');
+      line.className = 'tag-line';
+      for (const t of tags.slice(i, i + perLine)) {
+        const span = document.createElement('span');
+        span.className = 'tag';
+        span.textContent = '#' + t;
+        line.append(span);
+      }
+      el.append(line);
+    }
+    el.hidden = tags.length === 0;
+  }
+  render();
+
+  return {
+    setConfig(newTags, newPerLine) {
+      tags = newTags;
+      perLine = Math.max(1, newPerLine || 1);
+      render();
     },
   };
 }

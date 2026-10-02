@@ -7,6 +7,12 @@ const defaultNameEl = document.getElementById('defaultName');
 const likeNameEl = document.getElementById('likeName');
 const likeMinEl = document.getElementById('likeMin');
 const likeMaxEl = document.getElementById('likeMax');
+const tagInputEl = document.getElementById('tagInput');
+const tagChipsEl = document.getElementById('tagChips');
+const tagsPerLineEl = document.getElementById('tagsPerLine');
+const TAG_MAX_LEN = 30;   // server.py 와 같은 값
+const TAG_MAX_COUNT = 20;
+let tags = [];            // 해시태그 목록 (# 없이)
 const dirtyEl = document.getElementById('dirty');
 const busyEl = document.getElementById('busy');
 const appliedEl = document.getElementById('applied');
@@ -48,6 +54,8 @@ function readForm() {
   s.like_name = likeNameEl.value.trim();
   s.like_min = parseInt(likeMinEl.value, 10) || 0;
   s.like_max = parseInt(likeMaxEl.value, 10) || 0;
+  s.hashtags = tags.slice();
+  s.tags_per_line = parseInt(tagsPerLineEl.value, 10) || 1;
   return s;
 }
 
@@ -63,6 +71,9 @@ function writeForm(s) {
   likeMinEl.value = s.like_min;
   likeMaxEl.value = s.like_max;
   likes.setConfig(s.like_name, s.like_min, s.like_max);
+  tags = s.hashtags.slice();
+  tagsPerLineEl.value = s.tags_per_line;
+  renderTags();
   for (const k of SLIDERS) document.getElementById(k).value = s[k];
   document.querySelector(`input[name="dither"][value="${s.dither}"]`).checked = true;
   refreshLabels();
@@ -97,6 +108,7 @@ function sameSettings(a, b) {
   if (a.default_name !== b.default_name || a.like_name !== b.like_name) return false;
   if (a.title !== b.title || a.camera !== b.camera) return false;
   if (a.like_min !== b.like_min || a.like_max !== b.like_max) return false;
+  if (a.tags_per_line !== b.tags_per_line || a.hashtags.join(' ') !== b.hashtags.join(' ')) return false;
   return SLIDERS.every((k) => Math.abs(a[k] - b[k]) < 1e-6);
 }
 
@@ -176,6 +188,57 @@ const likes = setupLikes();
     onChange();
   });
 });
+
+// ── 해시태그: 추가/삭제하면 카메라 틀 아래와 미리보기에 바로 반영 ──
+const hashtags = setupHashtags();
+
+// server.py clean_hashtags 와 같은 규칙: 앞의 #·공백 제거, 30자 제한
+function cleanTag(t) {
+  return t.replace(/\s/g, '').replace(/^#+/, '').slice(0, TAG_MAX_LEN);
+}
+
+function renderTags() {
+  tagChipsEl.replaceChildren(...tags.map((t, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.textContent = '#' + t;
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.textContent = '×';
+    x.title = '삭제';
+    x.addEventListener('click', () => {
+      tags.splice(i, 1);
+      tagsChanged();
+    });
+    chip.append(x);
+    return chip;
+  }));
+  hashtags.setConfig(tags, parseInt(tagsPerLineEl.value, 10) || 1);
+}
+
+function tagsChanged() {
+  renderTags();
+  onChange();
+}
+
+function addTags() {
+  // "#가을 #축제" 처럼 여러 개를 한 번에 넣어도 됨 (띄어쓰기·쉼표·# 로 구분)
+  for (const raw of tagInputEl.value.split(/[\s,#]+/)) {
+    const t = cleanTag(raw);
+    if (t && !tags.includes(t) && tags.length < TAG_MAX_COUNT) tags.push(t);
+  }
+  tagInputEl.value = '';
+  tagsChanged();
+}
+
+document.getElementById('tagAdd').addEventListener('click', addTags);
+tagInputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing) {  // 한글 조합 중 Enter 는 무시
+    e.preventDefault();
+    addTags();
+  }
+});
+tagsPerLineEl.addEventListener('input', tagsChanged);
 
 // ── 테스트 사진 업로드 (파일 선택 / 실시간 카메라 공통) ──
 async function uploadImage(blob, name) {

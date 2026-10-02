@@ -51,13 +51,7 @@ h2 { font-size: 1rem; margin: 0 0 12px; }
   flex: none;
   width: 38px;
   height: 38px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  border: 2px solid #18181b;
-  box-shadow: inset 0 0 0 3px #fff, inset 0 0 0 4.5px #18181b;  /* 이중 원 */
-  font-size: 0.85rem;
-  font-weight: 700;
+  fill: #18181b;   /* 실루엣. 바깥 원 선 색은 _post.html 에서 지정 */
 }
 .post-name {
   flex: 1;
@@ -137,9 +131,14 @@ h2 { font-size: 1rem; margin: 0 0 12px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .btn:disabled { opacity: 0.5; cursor: default; }
 
-.post-actions { display: flex; gap: 16px; padding: 10px 12px 4px; }
+.post-actions { display: flex; gap: 12px; padding: 10px 12px 4px; }
 .post-likes { margin: 0; padding: 0 12px 12px; font-size: 0.9rem; }
 .post-likes b { font-weight: 700; }
+.post-likes:has(+ .post-tags:not([hidden])) { padding-bottom: 4px; }
+/* 해시태그: 한 줄(.tag-line) 안에서 폭이 모자라면 태그 사이에서만 줄바꿈 */
+.post-tags { padding: 0 12px 12px; font-size: 0.9rem; color: #00376b; }
+.tag-line { display: flex; flex-wrap: wrap; column-gap: 0.35em; }
+.tag { white-space: nowrap; }
 .post-actions svg {
   width: 28px;
   height: 28px;
@@ -195,6 +194,31 @@ body.admin { max-width: 1100px; }
 .field-head output { font-variant-numeric: tabular-nums; font-weight: 600; }
 .field input[type="range"] { width: 100%; height: 28px; }
 .field .hint { margin-top: 2px; }
+.tag-add { display: flex; gap: 8px; }
+.tag-add .text-input { flex: 1; min-width: 0; }
+.tag-add .btn { padding: 10px 16px; font-size: 0.95rem; }
+.tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tag-chips:empty { display: none; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 4px 4px 10px;
+  border-radius: 999px;
+  background: #e0ecff;
+  color: #00376b;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.chip button {
+  border: none;
+  background: none;
+  padding: 0 6px;
+  font-size: 1rem;
+  line-height: 1;
+  color: inherit;
+  cursor: pointer;
+}
 .range-pair { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .range-pair .text-input { flex: 1; min-width: 0; }
 .text-input {

@@ -124,6 +124,22 @@
           <p class="hint">"ㅇㅇ님 외 N명이 좋아합니다" — N은 출력할 때마다 이 범위에서 무작위</p>
         </div>
 
+        <div class="field">
+          <div class="field-head"><span>해시태그</span></div>
+          <div class="tag-add">
+            <input id="tagInput" class="text-input" type="text" maxlength="100"
+                   placeholder="태그 입력 (여러 개는 띄어쓰기로)" autocomplete="off" enterkeyhint="done">
+            <button id="tagAdd" class="btn ghost" type="button">추가</button>
+          </div>
+          <div id="tagChips" class="tag-chips"></div>
+          <div class="range-pair">
+            <span>한 줄에 최대</span>
+            <input id="tagsPerLine" class="text-input" type="number" min="1" max="10" inputmode="numeric">
+            <span>개</span>
+          </div>
+          <p class="hint">좋아요 문구 아래에 표시. 태그 중간에서는 줄이 안 바뀌고, 태그 사이에서만 줄바꿈돼요.</p>
+        </div>
+
         <div class="row">
           <button id="save" class="btn">저장 (출력에 적용)</button>
         </div>

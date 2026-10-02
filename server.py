@@ -68,6 +68,9 @@ DEFAULT_SETTINGS = {
     "like_name": "",     # 비워두면 "N명이 좋아합니다"
     "like_min": 100,
     "like_max": 999,
+    # 좋아요 문구 아래 해시태그. 한 줄에 최대 tags_per_line 개, 태그 중간에서는 줄을 안 바꿈
+    "hashtags": [],
+    "tags_per_line": 3,
 }
 
 # adjust_image 에 넘기는 이미지 보정 항목 (나머지는 프레임 관련)
@@ -86,6 +89,9 @@ CAMERA_MODES = ("environment", "user")
 NAME_MAX_LEN = 20
 TITLE_MAX_LEN = 30
 LIKES_LIMIT = (0, 999999)
+TAG_MAX_LEN = 30
+TAG_MAX_COUNT = 20
+TAGS_PER_LINE_LIMIT = (1, 10)
 
 
 def clean_name(name, max_len: int = NAME_MAX_LEN) -> str:
@@ -125,7 +131,26 @@ def clean_settings(data) -> dict:
                 pass
     if s["like_min"] > s["like_max"]:
         s["like_min"], s["like_max"] = s["like_max"], s["like_min"]
+    if isinstance(data.get("hashtags"), list):
+        s["hashtags"] = clean_hashtags(data["hashtags"])
+    if "tags_per_line" in data:
+        try:
+            lo, hi = TAGS_PER_LINE_LIMIT
+            s["tags_per_line"] = min(max(int(float(data["tags_per_line"])), lo), hi)
+        except (TypeError, ValueError):
+            pass
     return s
+
+
+def clean_hashtags(tags) -> list:
+    """해시태그 목록: 앞의 # 와 공백 제거, 빈 것·중복 제거, 길이·개수 제한. (admin.js cleanTag 와 같은 규칙)"""
+    out = []
+    for t in tags:
+        t = "".join(ch for ch in str(t or "") if ch.isprintable() and not ch.isspace()).lstrip("#")
+        t = t[:TAG_MAX_LEN]
+        if t and t not in out:
+            out.append(t)
+    return out[:TAG_MAX_COUNT]
 
 
 def pick_likes(s: dict, value=None) -> int:
@@ -522,6 +547,7 @@ def prepare_image(
 POST_HEADER_H = 84
 POST_FOOTER_H = 72
 POST_LIKES_H = 48
+POST_TAG_LINE_H = 34   # 해시태그 한 줄 높이
 # 한글 글꼴 후보 (앞에서부터 있는 것 사용). FONT_PATH / FONT_BOLD_PATH 환경변수로 직접 지정 가능.
 #   라즈베리파이:  sudo apt install fonts-nanum
 FONT_CANDIDATES = {
@@ -819,19 +845,49 @@ POST_ICONS_SVG = (                          # 화면(_post.html)용
 )
 
 
+# 프로필 아바타 (이름 없는 기본 프로필: 원 + 사람 실루엣). 24×24 기준, 화면(_post.html)도 같은 값 사용
+AVATAR = {
+    "ring_r": 11.25, "ring_stroke": 1.5,      # 바깥 원
+    "clip_r": 10.5,                           # 실루엣이 이 원 밖으로 안 나가게 자름
+    "head": (12, 9.5, 4.3),                   # 머리: 중심 x, y, 반지름
+    "body": (12, 21.8, 7.8, 6.6),             # 어깨: 타원 중심 x, y, 가로 반지름, 세로 반지름
+}
+
+
+def _draw_avatar(img: Image.Image, cx: float, cy: float, r: float):
+    """img 의 (cx, cy) 에 반지름 r 짜리 기본 프로필 아바타를 그린다."""
+    a = AVATAR
+    k = r / 12.0
+    x0, y0 = cx - r, cy - r
+
+    def box(x, y, rx, ry):
+        return (x0 + (x - rx) * k, y0 + (y - ry) * k, x0 + (x + rx) * k, y0 + (y + ry) * k)
+
+    # 실루엣(머리 + 어깨)을 따로 그린 뒤 안쪽 원 모양으로만 붙임
+    sil = Image.new("L", img.size, 255)
+    ds = ImageDraw.Draw(sil)
+    hx, hy, hr = a["head"]
+    ds.ellipse(box(hx, hy, hr, hr), fill=0)
+    bx, by, brx, bry = a["body"]
+    ds.ellipse(box(bx, by, brx, bry), fill=0)
+    mask = Image.new("L", img.size, 0)
+    ImageDraw.Draw(mask).ellipse(box(12, 12, a["clip_r"], a["clip_r"]), fill=255)
+    img.paste(sil, (0, 0), mask)
+
+    # 바깥 원
+    rr = a["ring_r"]
+    ImageDraw.Draw(img).ellipse(box(12, 12, rr, rr), outline=0,
+                                width=max(2, round(a["ring_stroke"] * k)))
+
+
 def _draw_header(width: int, name: str) -> Image.Image:
     img = Image.new("L", (width, POST_HEADER_H), 255)
     d = ImageDraw.Draw(img)
     cy = POST_HEADER_H // 2
 
-    # 프로필 원 (스토리 테두리처럼 이중 원) + 이름 첫 글자
+    # 프로필 아바타 (기본 프로필 실루엣)
     cx, r = 44, 28
-    d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=0, width=3)
-    r2 = r - 7
-    d.ellipse((cx - r2, cy - r2, cx + r2, cy + r2), outline=0, width=2)
-    if name:
-        font, stroke = _font(22, bold=True)
-        d.text((cx, cy), name[0], font=font, fill=0, anchor="mm", stroke_width=stroke, stroke_fill=0)
+    _draw_avatar(img, cx, cy, r)
 
     # 더보기 점 3개
     for i in range(3):
@@ -845,11 +901,36 @@ def _draw_header(width: int, name: str) -> Image.Image:
     return img
 
 
-def _draw_footer(width: int, likes: list) -> Image.Image:
-    img = Image.new("L", (width, POST_FOOTER_H + POST_LIKES_H), 255)
+def hashtag_lines(tags, per_line: int, fits) -> list:
+    """해시태그를 줄로 나눈다. (camera.js setupHashtags 와 같은 규칙)
+
+    - per_line 개씩 묶고, 한 묶음이 너무 길면 태그 "사이"에서만 줄을 바꾼다 (태그 중간은 안 자름)
+    - fits(text): 그 글자가 한 줄 폭에 들어가면 True
+    """
+    lines = []
+    for i in range(0, len(tags), per_line):
+        cur = ""
+        for t in tags[i:i + per_line]:
+            word = "#" + t
+            cand = f"{cur} {word}" if cur else word
+            if cur and not fits(cand):
+                lines.append(cur)
+                cur = word
+            else:
+                cur = cand
+        lines.append(cur)
+    return lines
+
+
+def _draw_footer(width: int, likes: list, tags=(), per_line: int = 3) -> Image.Image:
+    max_w = width - 40
+    tag_font, _ = _font(24)
+    lines = hashtag_lines(list(tags), per_line, lambda t: tag_font.getlength(t) <= max_w)
+    tags_h = len(lines) * POST_TAG_LINE_H + (8 if lines else 0)
+    img = Image.new("L", (width, POST_FOOTER_H + POST_LIKES_H + tags_h), 255)
     d = ImageDraw.Draw(img)
     size = 44
-    gap = 26
+    gap = 19  # 아이콘 사이 간격 (화면 .post-actions gap 과 비율 맞춤)
     y = (POST_FOOTER_H - size) // 2
 
     # ♡ 좋아요  💬 댓글  ✈ 공유
@@ -860,7 +941,12 @@ def _draw_footer(width: int, likes: list) -> Image.Image:
         _draw_icon(d, name, width - 16 - size - i * (size + gap), y, size)
 
     # 좋아요 문구 (아이콘 줄 아래)
-    _draw_runs(d, (20, POST_FOOTER_H + POST_LIKES_H // 2 - 6), likes, 24, width - 40)
+    _draw_runs(d, (20, POST_FOOTER_H + POST_LIKES_H // 2 - 6), likes, 24, max_w)
+
+    # 해시태그 (좋아요 문구 아래). 한 태그가 한 줄보다 길면 _draw_runs 가 뒤를 … 로 줄임
+    y0 = POST_FOOTER_H + POST_LIKES_H - 6
+    for i, line in enumerate(lines):
+        _draw_runs(d, (20, y0 + i * POST_TAG_LINE_H + POST_TAG_LINE_H // 2), [(line, False)], 24, max_w)
     return img
 
 
@@ -868,11 +954,11 @@ def _to_1bit(img_l: Image.Image) -> Image.Image:
     return img_l.point(lambda v: 255 if v >= 128 else 0).convert("1", dither=Image.Dither.NONE)
 
 
-def compose_post(photo: Image.Image, name: str, likes: list) -> Image.Image:
-    """디더링된 1비트 사진에 인스타그램 프레임(머리글·아이콘줄·좋아요 문구)을 붙인다."""
+def compose_post(photo: Image.Image, name: str, likes: list, tags=(), per_line: int = 3) -> Image.Image:
+    """디더링된 1비트 사진에 인스타그램 프레임(머리글·아이콘줄·좋아요 문구·해시태그)을 붙인다."""
     w = photo.width
     header = _to_1bit(_draw_header(w, clean_name(name)))
-    footer = _to_1bit(_draw_footer(w, likes))
+    footer = _to_1bit(_draw_footer(w, likes, tags, per_line))
     post = Image.new("1", (w, header.height + photo.height + footer.height), 1)
     post.paste(header, (0, 0))
     post.paste(photo.convert("1"), (0, header.height))
@@ -889,7 +975,8 @@ def make_receipt(base: Image.Image, s: dict, name: str = "", likes=None):
     if s.get("frame"):
         # 이름을 비워두면 관리 페이지에서 저장한 기본 이름 사용
         author = clean_name(name) or s["default_name"]
-        out = compose_post(out, author, likes_runs(s["like_name"], pick_likes(s, likes)))
+        out = compose_post(out, author, likes_runs(s["like_name"], pick_likes(s, likes)),
+                           s["hashtags"], s["tags_per_line"])
     return out, gamma, brightness
 
 
@@ -927,7 +1014,7 @@ print_queue = ThreadPoolExecutor(max_workers=1)
 
 @app.route("/")
 def index():
-    return render_template("index.html", settings=settings, icons=POST_ICONS_SVG)
+    return render_template("index.html", settings=settings, icons=POST_ICONS_SVG, avatar=AVATAR)
 
 
 @app.route("/print", methods=["POST"])
@@ -957,7 +1044,7 @@ ADMIN_CACHE_SIZE = 5
 
 @app.route("/admin")
 def admin():
-    return render_template("admin.html", settings=settings, icons=POST_ICONS_SVG)
+    return render_template("admin.html", settings=settings, icons=POST_ICONS_SVG, avatar=AVATAR)
 
 
 @app.route("/admin/settings", methods=["GET"])

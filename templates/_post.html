@@ -2,10 +2,18 @@
      출력물에도 같은 모양(이름 머리글 + ♡ 💬 ✈)이 찍힌다. -->
 <div class="post">
   <div class="post-head">
-    <span class="post-avatar"><span id="avatarInitial"></span></span>
+    <!-- 기본 프로필 아바타: 모양 값은 server.py AVATAR (출력물과 같음) -->
+    <svg class="post-avatar" viewBox="0 0 24 24" aria-hidden="true">
+      <defs><clipPath id="avatarClip"><circle cx="12" cy="12" r="{{ avatar.clip_r }}"/></clipPath></defs>
+      <g clip-path="url(#avatarClip)">
+        <circle cx="{{ avatar.head[0] }}" cy="{{ avatar.head[1] }}" r="{{ avatar.head[2] }}"/>
+        <ellipse cx="{{ avatar.body[0] }}" cy="{{ avatar.body[1] }}" rx="{{ avatar.body[2] }}" ry="{{ avatar.body[3] }}"/>
+      </g>
+      <circle cx="12" cy="12" r="{{ avatar.ring_r }}" fill="none" stroke="#18181b" stroke-width="{{ avatar.ring_stroke }}"/>
+    </svg>
     <!-- 비워두면 관리 페이지에서 저장한 기본 이름(흐린 글씨)이 찍힘 -->
     <input id="authorName" class="post-name" type="text"
-           placeholder="{{ settings.default_name or '이름 입력' }}" data-default="{{ settings.default_name }}"
+           placeholder="{{ settings.default_name or '이름 입력' }}"
            maxlength="20" autocomplete="off" enterkeyhint="done">
     <span class="post-more" aria-hidden="true">•••</span>
   </div>
@@ -28,4 +36,7 @@
   <!-- "ㅇㅇ님 외 N명이 좋아합니다" — N은 camera.js 가 범위 안에서 뽑아 출력 요청에도 같이 보냄 -->
   <p id="likesLine" class="post-likes" data-name="{{ settings.like_name }}"
      data-min="{{ settings.like_min }}" data-max="{{ settings.like_max }}"></p>
+  <!-- 해시태그 (camera.js setupHashtags). 한 줄 최대 개수 + 태그 사이에서만 줄바꿈 -->
+  <div id="tagsBox" class="post-tags" data-tags='{{ settings.hashtags | tojson }}'
+       data-per-line="{{ settings.tags_per_line }}" hidden></div>
 </div>
