@@ -3,32 +3,31 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-  <title>영수증 프린터</title>
+  <title>{{ settings.title or "사진 출력" }}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <h1>🧾 사진 출력</h1>
+  <h1>🧾 {{ settings.title or "사진 출력" }}</h1>
 
-  <!-- 방법 1: 사진 파일 선택 / 기본 카메라로 촬영 -->
+  <!-- 실시간 카메라 (HTTPS 필요). 갤러리 사진 출력이 필요하면 /admin 의 "출력 테스트" 사용 -->
   <section class="card">
-    <h2>사진 선택 / 촬영</h2>
-    <label class="btn" for="file">사진 고르기</label>
-    <input id="file" type="file" accept="image/*" hidden>
-    <p class="hint">누르면 "사진 보관함 / 사진 찍기 / 파일 선택" 중에 고를 수 있어요.</p>
-  </section>
-
-  <!-- 방법 2: 웹페이지 내 실시간 카메라 (HTTPS 필요) -->
-  <section class="card">
-    <h2>실시간 카메라</h2>
-    <video id="video" autoplay playsinline muted></video>
+    {% include "_post.html" %}
     <div class="row">
       <button id="capture" class="btn">촬영해서 출력</button>
-      <button id="flip" class="btn ghost">카메라 전환</button>
     </div>
+    <p class="hint">위쪽에 이름을 적으면 영수증 사진 위에 함께 찍혀요.</p>
     <p id="camErr" class="hint err" hidden></p>
   </section>
 
   <canvas id="canvas" hidden></canvas>
+
+  <!-- 출력하는 동안 띄우는 로딩 창 (app.js) -->
+  <div id="printing" class="modal" hidden>
+    <div class="modal-box">
+      <div class="spinner"></div>
+      <p>출력 중…</p>
+    </div>
+  </div>
 
   <div id="status" class="status" hidden></div>
 

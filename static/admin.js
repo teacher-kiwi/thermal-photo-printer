@@ -1,5 +1,12 @@
 const statusEl = document.getElementById('status');
 const autoEl = document.getElementById('auto');
+const frameEl = document.getElementById('frame');
+const titleEl = document.getElementById('title');
+const testPrintBtn = document.getElementById('testPrint');
+const defaultNameEl = document.getElementById('defaultName');
+const likeNameEl = document.getElementById('likeName');
+const likeMinEl = document.getElementById('likeMin');
+const likeMaxEl = document.getElementById('likeMax');
 const dirtyEl = document.getElementById('dirty');
 const busyEl = document.getElementById('busy');
 const appliedEl = document.getElementById('applied');
@@ -33,14 +40,29 @@ function showStatus(msg, kind) {
 
 // ── 화면 ↔ 설정값 ──
 function readForm() {
-  const s = { auto: autoEl.checked };
+  const s = { auto: autoEl.checked, frame: frameEl.checked, default_name: defaultNameEl.value.trim() };
   for (const k of SLIDERS) s[k] = parseFloat(document.getElementById(k).value);
   s.dither = document.querySelector('input[name="dither"]:checked').value;
+  s.title = titleEl.value.trim();
+  s.camera = document.querySelector('input[name="camera"]:checked').value;
+  s.like_name = likeNameEl.value.trim();
+  s.like_min = parseInt(likeMinEl.value, 10) || 0;
+  s.like_max = parseInt(likeMaxEl.value, 10) || 0;
   return s;
 }
 
 function writeForm(s) {
   autoEl.checked = s.auto;
+  frameEl.checked = s.frame;
+  defaultNameEl.value = s.default_name;
+  author.setDefault(s.default_name);
+  titleEl.value = s.title;
+  document.querySelector(`input[name="camera"][value="${s.camera}"]`).checked = true;
+  camera.setFacing(s.camera);
+  likeNameEl.value = s.like_name;
+  likeMinEl.value = s.like_min;
+  likeMaxEl.value = s.like_max;
+  likes.setConfig(s.like_name, s.like_min, s.like_max);
   for (const k of SLIDERS) document.getElementById(k).value = s[k];
   document.querySelector(`input[name="dither"][value="${s.dither}"]`).checked = true;
   refreshLabels();
@@ -62,8 +84,19 @@ function refreshLabels() {
   dirtyEl.hidden = !saved || sameSettings(s, saved);
 }
 
+// 저장하지 않은 변경이 있으면 새로고침/닫기 전에 브라우저가 한 번 확인
+window.addEventListener('beforeunload', (e) => {
+  if (saved && !sameSettings(readForm(), saved)) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
 function sameSettings(a, b) {
-  if (a.auto !== b.auto || a.dither !== b.dither) return false;
+  if (a.auto !== b.auto || a.frame !== b.frame || a.dither !== b.dither) return false;
+  if (a.default_name !== b.default_name || a.like_name !== b.like_name) return false;
+  if (a.title !== b.title || a.camera !== b.camera) return false;
+  if (a.like_min !== b.like_min || a.like_max !== b.like_max) return false;
   return SLIDERS.every((k) => Math.abs(a[k] - b[k]) < 1e-6);
 }
 
@@ -81,7 +114,7 @@ async function updatePreview() {
     const res = await fetch('/admin/preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: imageId, settings: readForm() }),
+      body: JSON.stringify({ id: imageId, settings: readForm(), name: author.get(), likes: likes.get() }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.status === 'ok') {
@@ -109,9 +142,39 @@ function onChange() {
   debounceTimer = setTimeout(updatePreview, 120);
 }
 
-document.querySelectorAll('input[type="range"], #auto, input[name="dither"]').forEach((el) => {
+document.querySelectorAll('input[type="range"], #auto, #frame, input[name="dither"]').forEach((el) => {
   el.addEventListener('input', onChange);
   el.addEventListener('change', onChange);
+});
+
+// 메인 화면 제목은 출력물과 무관 → 미리보기 대신 '저장 안 됨' 표시만 갱신
+titleEl.addEventListener('input', refreshLabels);
+
+// 메인 화면 카메라: 이 페이지 카메라도 같은 방향으로 바꿔서 바로 확인
+document.querySelectorAll('input[name="camera"]').forEach((el) => {
+  el.addEventListener('change', () => {
+    camera.setFacing(el.value);
+    refreshLabels();
+  });
+});
+
+// 프레임 머리글의 이름이 바뀌어도 미리보기 갱신 (camera.js)
+const author = setupAuthorName(onChange);
+
+// 기본 이름: 프레임 이름칸의 흐린 글씨도 같이 바꿔서 바로 확인
+defaultNameEl.addEventListener('input', () => {
+  author.setDefault(defaultNameEl.value.trim());
+  onChange();
+});
+
+// 좋아요 문구: 카메라 틀 아래 문구도 같이 바꿔서 바로 확인
+const likes = setupLikes();
+[likeNameEl, likeMinEl, likeMaxEl].forEach((el) => {
+  el.addEventListener('input', () => {
+    const s = readForm();
+    likes.setConfig(s.like_name, s.like_min, s.like_max);
+    onChange();
+  });
 });
 
 // ── 테스트 사진 업로드 (파일 선택 / 실시간 카메라 공통) ──
@@ -134,6 +197,8 @@ async function uploadImage(blob, name) {
     document.getElementById('compare').hidden = false;
     document.getElementById('fileHint').textContent = name;
     statusEl.hidden = true;
+    likes.reroll(); // 새 사진마다 새 숫자
+    testPrintBtn.disabled = false;
     updatePreview();
   } catch (err) {
     showStatus('❌ 업로드 실패: ' + err.message, 'err');
@@ -147,7 +212,7 @@ document.getElementById('file').addEventListener('change', (e) => {
 });
 
 // ── 실시간 카메라 (camera.js, 메인 페이지와 같은 방식으로 촬영) ──
-setupCamera((blob) => uploadImage(blob, '카메라 촬영 ' + new Date().toLocaleTimeString()));
+const camera = setupCamera((blob) => uploadImage(blob, '카메라 촬영 ' + new Date().toLocaleTimeString()));
 
 // 출력 미리보기를 누르면 실제 픽셀 크기(1:1) ↔ 화면 맞춤 전환
 resultImg.addEventListener('click', () => resultImg.classList.toggle('actual'));
@@ -170,6 +235,31 @@ document.getElementById('save').addEventListener('click', async () => {
     }
   } catch (e) {
     showStatus('❌ 저장 실패: ' + e.message, 'err');
+  }
+});
+
+// ── 출력 테스트: 지금 미리보기와 같은 값으로 실제 출력 ──
+testPrintBtn.addEventListener('click', async () => {
+  if (!imageId) return;
+  testPrintBtn.disabled = true;
+  showStatus('출력 중…', 'busy');
+  try {
+    const res = await fetch('/admin/print', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: imageId, settings: readForm(), name: author.get(), likes: likes.get() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.status === 'ok') {
+      showStatus('✅ 출력 완료!', 'ok');
+    } else {
+      if (res.status === 404) imageId = null; // 서버 재시작 등으로 사진이 사라짐
+      showStatus('❌ 출력 실패: ' + (data.message || res.status), 'err');
+    }
+  } catch (e) {
+    showStatus('❌ 출력 실패: ' + e.message, 'err');
+  } finally {
+    testPrintBtn.disabled = !imageId;
   }
 });
 

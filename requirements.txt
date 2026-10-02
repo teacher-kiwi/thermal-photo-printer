@@ -1,5 +1,5 @@
 Flask
-Pillow
+Pillow>=10.1
 numpy
 python-escpos
 pyusb

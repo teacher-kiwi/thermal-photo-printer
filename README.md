@@ -11,7 +11,7 @@ USB로 연결된 **ESC/POS 영수증 프린터(CPP-3100, 80mm)** 로 출력됩�
 | 파일 | 설명 |
 |------|------|
 | `server.py` | Flask 웹서버 + 이미지 보정·디더링 + USB 프린터 출력 |
-| `templates/index.html`, `static/app.js` | 태블릿 웹 UI (사진 선택 + 실시간 카메라) |
+| `templates/index.html`, `static/app.js` | 태블릿 웹 UI (실시간 카메라 촬영 → 출력) |
 | `templates/admin.html`, `static/admin.js` | 보정값 조절 페이지 (`/admin`) |
 | `static/camera.js`, `static/style.css` | 두 페이지 공통 (실시간 카메라, 스타일) |
 | `print_test.py` | 웹서버 없이 프린터 연결만 테스트 |
@@ -30,9 +30,9 @@ USB로 연결된 **ESC/POS 영수증 프린터(CPP-3100, 80mm)** 로 출력됩�
 ```bash
 cd /app
 
-# 1) 시스템 패키지 (libusb: USB 직접 접근용)
+# 1) 시스템 패키지 (libusb: USB 직접 접근용, fonts-nanum: 영수증에 찍히는 한글 이름용)
 sudo apt update
-sudo apt install -y python3-venv libusb-1.0-0
+sudo apt install -y python3-venv libusb-1.0-0 fonts-nanum
 
 # 2) 파이썬 가상환경 + 의존성
 rm -rf venv
@@ -60,7 +60,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```bash
 ./setup/gen-cert.sh 10.42.0.1
 ```
-> 인증서가 없으면 서버는 HTTP로 뜨고, "사진 고르기"는 되지만 페이지 내 실시간 카메라는 차단됩니다.
+> 인증서가 없으면 서버는 HTTP로 뜨고 카메라가 차단되어 **메인 화면에서 촬영할 수 없습니다.** (`/admin` 의 "사진 고르기"는 동작)
 
 ---
 
@@ -98,7 +98,8 @@ journalctl -u receipt-printer -f      # 로그 확인
 1. 스마트폰을 핫스팟 `ReceiptPi` 에 연결
 2. 브라우저에서 **`https://10.42.0.1:3001`** 접속
 3. 처음 한 번 "안전하지 않음/인증서 경고"를 **허용** (자체서명 인증서라 정상)
-4. "사진 고르기" 로 갤러리/카메라 선택, 또는 "실시간 카메라"로 촬영 → 영수증 출력
+4. 이름을 적고 "촬영해서 출력" → 영수증 출력
+   (갤러리 사진을 출력하려면 `/admin` 에서 "사진 고르기" → "출력 테스트")
 
 ---
 
@@ -112,6 +113,7 @@ journalctl -u receipt-printer -f      # 로그 확인
 2. 슬라이더를 움직이면 오른쪽에 **영수증에 실제로 찍힐 1비트 이미지**가 바로 갱신됨
    (출력 미리보기를 누르면 실제 픽셀 크기로 확대)
 3. 마음에 들면 **저장** → 다음 출력부터 적용
+   (저장 전에 **출력 테스트** 버튼으로 지금 미리보기를 실제로 한 장 뽑아볼 수 있음)
 
 | 항목 | 설명 |
 |------|------|
@@ -119,6 +121,11 @@ journalctl -u receipt-printer -f      # 로그 확인
 | 밝기 / 감마 | 자동 보정을 끄면 이 고정값을 사용 |
 | 샤프닝 | 디더링 전에 윤곽을 살림 (0이면 끔) |
 | 디더링 | Floyd-Steinberg(기본) / 블루 노이즈 / Atkinson / JJN / Stucki / Sierra |
+| 인스타그램 프레임 | 사진 위에 작성자 이름, 아래에 ♡ 💬 ✈ 아이콘을 붙여 출력 |
+| 메인 화면 카메라 | 후면 / 전면. 메인 화면엔 전환 버튼 없이 이 방향으로만 켜짐 |
+| 메인 화면 제목 | 메인 화면 맨 위 "🧾 ○○○" 문구 (기본값 "사진 출력") |
+| 기본 이름 | 이름칸을 비워두고 출력하면 대신 찍힐 이름 |
+| 좋아요 문구 | 맨 아래 "ㅇㅇ님 외 N명이 좋아합니다". ㅇㅇ과 N의 무작위 범위를 지정 |
 
 - 저장값은 `settings.json` 에 보관됩니다. 기기마다 다른 값이라 git 에는 올라가지 않습니다(`.gitignore`).
 - 맥에서도 `./venv/bin/python server.py` 로 띄우고 `http://localhost:3001/admin` 에서 똑같이 쓸 수 있습니다.

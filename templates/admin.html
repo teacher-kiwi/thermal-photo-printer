@@ -23,12 +23,12 @@
       <!-- 메인 페이지의 "실시간 카메라"와 같은 방식으로 촬영 (HTTPS 필요) -->
       <section class="card">
         <h2>실시간 카메라</h2>
-        <video id="video" autoplay playsinline muted></video>
+        {% include "_post.html" %}
         <div class="row">
           <button id="capture" class="btn">촬영해서 미리보기</button>
-          <button id="flip" class="btn ghost">카메라 전환</button>
         </div>
-        <p class="hint">출력하지 않고 오른쪽 미리보기만 바뀝니다.</p>
+        <p class="hint">출력하지 않고 오른쪽 미리보기만 바뀝니다. 이름은 사진 올리기에도 쓰여요.
+          카메라 방향은 아래 "메인 화면 카메라" 설정을 따라요.</p>
         <p id="camErr" class="hint err" hidden></p>
       </section>
       <canvas id="canvas" hidden></canvas>
@@ -83,6 +83,47 @@
           <p id="ditherHint" class="hint"></p>
         </div>
 
+        <div class="field">
+          <div class="field-head"><span>메인 화면 카메라</span></div>
+          <div class="segmented">
+            <label><input type="radio" name="camera" value="environment"><span>후면</span></label>
+            <label><input type="radio" name="camera" value="user"><span>전면 (셀카)</span></label>
+          </div>
+          <p class="hint">메인 화면에는 카메라 전환 버튼이 없고 이 방향으로만 켜집니다.</p>
+        </div>
+
+        <div class="field">
+          <div class="field-head"><span>메인 화면 제목</span></div>
+          <input id="title" class="text-input" type="text" maxlength="30"
+                 placeholder="사진 출력" autocomplete="off">
+          <p class="hint">메인 화면 맨 위 "🧾 ○○○" 부분. 비워두면 "사진 출력"</p>
+        </div>
+
+        <label class="switch field">
+          <input id="frame" type="checkbox">
+          <span>인스타그램 프레임 (이름 + ♡ 💬 ✈)</span>
+        </label>
+
+        <div class="field">
+          <div class="field-head"><span>기본 이름</span></div>
+          <input id="defaultName" class="text-input" type="text" maxlength="20"
+                 placeholder="비워두면 이름 없이 출력" autocomplete="off">
+          <p class="hint">이름칸을 비워두고 출력하면 이 이름이 찍힙니다.</p>
+        </div>
+
+        <div class="field">
+          <div class="field-head"><span>좋아요 문구</span></div>
+          <input id="likeName" class="text-input" type="text" maxlength="20"
+                 placeholder="ㅇㅇ (비워두면 'N명이 좋아합니다')" autocomplete="off">
+          <div class="range-pair">
+            <input id="likeMin" class="text-input" type="number" min="0" max="999999" inputmode="numeric">
+            <span>~</span>
+            <input id="likeMax" class="text-input" type="number" min="0" max="999999" inputmode="numeric">
+            <span>명</span>
+          </div>
+          <p class="hint">"ㅇㅇ님 외 N명이 좋아합니다" — N은 출력할 때마다 이 범위에서 무작위</p>
+        </div>
+
         <div class="row">
           <button id="save" class="btn">저장 (출력에 적용)</button>
         </div>
@@ -98,6 +139,10 @@
     <section class="card preview-card">
       <h2>출력 미리보기 <span id="busy" class="hint" hidden>계산 중…</span></h2>
       <p id="applied" class="hint"></p>
+      <div class="row">
+        <button id="testPrint" class="btn" disabled>출력 테스트</button>
+      </div>
+      <p class="hint">지금 미리보기 그대로 프린터로 출력합니다. (저장 안 한 값도 그대로)</p>
       <div id="empty" class="empty">사진을 먼저 올려주세요</div>
       <div id="compare" class="compare" hidden>
         <figure>

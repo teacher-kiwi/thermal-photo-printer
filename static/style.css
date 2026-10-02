@@ -39,13 +39,118 @@ h2 { font-size: 1rem; margin: 0 0 12px; }
 .row { display: flex; gap: 10px; margin-top: 12px; }
 .row .btn { flex: 1; }
 
-video {
-  width: 100%;
+/* ── 인스타그램 게시물 모양 카메라 프레임 (_post.html) ── */
+.post {
+  background: #fff;
+  border: 1px solid #e4e4e7;
   border-radius: 10px;
-  background: #000;
-  aspect-ratio: 3 / 4;
-  object-fit: cover;
+  overflow: hidden;
 }
+.post-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px; }
+.post-avatar {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid #18181b;
+  box-shadow: inset 0 0 0 3px #fff, inset 0 0 0 4.5px #18181b;  /* 이중 원 */
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.post-name {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: #f4f4f5;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  color: inherit;
+}
+.post-more { font-size: 0.7rem; letter-spacing: 1px; }
+
+/* 촬영도 이 비율(가로 4:3) 그대로 잘라서 저장됨 (camera.js) */
+.post-photo { position: relative; }
+.post video.mirror { transform: scaleX(-1); }  /* 전면 카메라: 화면만 거울처럼 (camera.js) */
+.post video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: #000;
+}
+
+/* 촬영 카운트다운: 사진 가운데 큰 반투명 숫자 */
+.countdown {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: clamp(6rem, 30vw, 12rem);
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.7);
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.countdown[hidden] { display: none; }
+.countdown.tick { animation: count-pop 1s ease-out; }
+@keyframes count-pop {
+  from { transform: scale(1.5); opacity: 0; }
+  20%  { transform: scale(1); opacity: 1; }
+  to   { transform: scale(0.9); opacity: 0.4; }
+}
+
+/* 출력 중 로딩 창 */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+.modal[hidden] { display: none; }
+.modal-box {
+  min-width: 180px;
+  padding: 28px 36px;
+  text-align: center;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.modal-box p { margin: 14px 0 0; }
+.spinner {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto;
+  border: 5px solid #e4e4e7;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn:disabled { opacity: 0.5; cursor: default; }
+
+.post-actions { display: flex; gap: 16px; padding: 10px 12px 4px; }
+.post-likes { margin: 0; padding: 0 12px 12px; font-size: 0.9rem; }
+.post-likes b { font-weight: 700; }
+.post-actions svg {
+  width: 28px;
+  height: 28px;
+  fill: none;
+  stroke: #18181b;   /* 선 두께는 _post.html 에서 아이콘별로 지정 */
+  overflow: visible;  /* 회전한 아이콘 모서리가 잘리지 않게 */
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+/* 북마크처럼 오른쪽 끝에 붙는 아이콘 (첫 번째 것에만 auto 여백 → 나머지는 그 뒤로 붙음) */
+.post-actions svg:not(.right) + svg.right { margin-left: auto; }
 
 .hint { font-size: 0.85rem; color: #71717a; margin: 10px 0 0; }
 .hint.err { color: #dc2626; }
@@ -90,6 +195,16 @@ body.admin { max-width: 1100px; }
 .field-head output { font-variant-numeric: tabular-nums; font-weight: 600; }
 .field input[type="range"] { width: 100%; height: 28px; }
 .field .hint { margin-top: 2px; }
+.range-pair { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.range-pair .text-input { flex: 1; min-width: 0; }
+.text-input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 1rem;
+}
 
 .segmented { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .segmented input { display: none; }

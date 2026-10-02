@@ -1,0 +1,31 @@
+<!-- 인스타그램 게시물 모양 카메라 프레임 (index.html, admin.html 공통)
+     출력물에도 같은 모양(이름 머리글 + ♡ 💬 ✈)이 찍힌다. -->
+<div class="post">
+  <div class="post-head">
+    <span class="post-avatar"><span id="avatarInitial"></span></span>
+    <!-- 비워두면 관리 페이지에서 저장한 기본 이름(흐린 글씨)이 찍힘 -->
+    <input id="authorName" class="post-name" type="text"
+           placeholder="{{ settings.default_name or '이름 입력' }}" data-default="{{ settings.default_name }}"
+           maxlength="20" autocomplete="off" enterkeyhint="done">
+    <span class="post-more" aria-hidden="true">•••</span>
+  </div>
+  <!-- 카메라 방향은 관리 페이지에서 지정 (camera.js 가 data-facing 을 읽음) -->
+  <div class="post-photo">
+    <video id="video" autoplay playsinline muted data-facing="{{ settings.camera or 'environment' }}"></video>
+    <!-- 촬영 카운트다운 숫자 (camera.js) -->
+    <div id="countdown" class="countdown" hidden aria-live="assertive"></div>
+  </div>
+  <!-- 아이콘 모양은 server.py icon_svg() 에서 받음 (출력물과 같은 점 좌표) -->
+  <div class="post-actions" aria-hidden="true">
+    {% for icon in icons %}
+    <svg viewBox="0 0 24 24" style="stroke-width: {{ icon.stroke }}"{% if icon.right %} class="right"{% endif %}>
+      {%- for points, closed in icon.shapes -%}
+      {% if closed %}<polygon points="{{ points }}"/>{% else %}<polyline points="{{ points }}"/>{% endif %}
+      {%- endfor -%}
+    </svg>
+    {% endfor %}
+  </div>
+  <!-- "ㅇㅇ님 외 N명이 좋아합니다" — N은 camera.js 가 범위 안에서 뽑아 출력 요청에도 같이 보냄 -->
+  <p id="likesLine" class="post-likes" data-name="{{ settings.like_name }}"
+     data-min="{{ settings.like_min }}" data-max="{{ settings.like_max }}"></p>
+</div>
